@@ -21,7 +21,7 @@ public class PaletteGetBenchmark {
 
     @Setup
     public void setup() {
-        palette = Palette.newPalette(dimension, 15, 4);
+        palette = Palette.newPalette(dimension, 15, 4, Integer.MAX_VALUE);
         AtomicInteger value = new AtomicInteger();
         palette.setAll((x, y, z) -> value.getAndIncrement());
     }

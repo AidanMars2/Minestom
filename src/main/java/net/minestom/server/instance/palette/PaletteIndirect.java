@@ -20,8 +20,7 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
     private static final ThreadLocal<int[]> WRITE_CACHE = ThreadLocal.withInitial(() -> new int[4096]);
 
     // Specific to this palette type
-    private final int dimension;
-    private final int maxBitsPerEntry;
+    private final byte dimension, directBitsPerEntry, maxBitsPerEntry;
 
     private byte bitsPerEntry;
     private int count;
@@ -30,11 +29,12 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
     // palette index = value
     IntArrayList paletteToValueList;
     // value = palette index
-    private Int2IntOpenHashMap valueToPaletteMap;
+    Int2IntOpenHashMap valueToPaletteMap;
 
-    PaletteIndirect(int dimension, int maxBitsPerEntry, byte bitsPerEntry,
+    PaletteIndirect(byte dimension, byte directBitsPerEntry, byte maxBitsPerEntry, byte bitsPerEntry,
                     int count, int[] palette, long[] values) {
         this.dimension = dimension;
+        this.directBitsPerEntry = directBitsPerEntry;
         this.maxBitsPerEntry = maxBitsPerEntry;
         this.bitsPerEntry = bitsPerEntry;
 
@@ -51,8 +51,8 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
         }
     }
 
-    PaletteIndirect(int dimension, int maxBitsPerEntry, byte bitsPerEntry) {
-        this(dimension, maxBitsPerEntry, bitsPerEntry,
+    PaletteIndirect(byte dimension, byte directBitsPerEntry, byte maxBitsPerEntry, byte bitsPerEntry) {
+        this(dimension, directBitsPerEntry, maxBitsPerEntry, bitsPerEntry,
                 0,
                 new int[]{0},
                 new long[arrayLength(dimension, bitsPerEntry)]
@@ -60,7 +60,7 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
     }
 
     PaletteIndirect(AdaptivePalette palette) {
-        this(palette.dimension, palette.maxBitsPerEntry, palette.defaultBitsPerEntry);
+        this(palette.dimension, palette.directBitsPerEntry, palette.maxBitsPerEntry, palette.minBitsPerEntry);
     }
 
     @Override
@@ -82,23 +82,21 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
 
     @Override
     public void set(int x, int y, int z, int value) {
-        value = getPaletteIndex(value);
-        final int oldValue = Palettes.write(dimension(), bitsPerEntry, values, x, y, z, value);
+        final int paletteIndex = getPaletteIndex(value);
+        final int oldValue = Palettes.write(dimension(), bitsPerEntry, values, x, y, z, paletteIndex);
         // Check if block count needs to be updated
-        final boolean currentAir = oldValue == 0;
+        final boolean currentAir = hasPalette() ? paletteToValueList.getInt(oldValue) == 0 : oldValue == 0;
         if (currentAir != (value == 0)) this.count += currentAir ? 1 : -1;
     }
 
     @Override
     public void fill(int value) {
-        if (value == 0) {
-            Arrays.fill(values, 0);
-            this.count = 0;
-            return;
-        }
-        value = getPaletteIndex(value);
-        Palettes.fill(bitsPerEntry, values, value);
-        this.count = maxSize();
+        Arrays.fill(values, 0);
+        this.valueToPaletteMap.clear();
+        this.paletteToValueList.clear();
+        this.valueToPaletteMap.put(value, 0);
+        this.paletteToValueList.add(value);
+        this.count = value != 0 ? maxSize() : 0;
     }
 
     @Override
@@ -121,12 +119,9 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
                             fillValue = -2;
                         }
                     }
+                    count += value != 0 ? 1 : 0;
                     // Set value in cache
-                    if (value != 0) {
-                        value = getPaletteIndex(value);
-                        count++;
-                    }
-                    cache[index++] = value;
+                    cache[index++] = getPaletteIndex(value);
                 }
             }
         }
@@ -181,6 +176,11 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
     }
 
     @Override
+    public int directBitsPerEntry() {
+        return directBitsPerEntry;
+    }
+
+    @Override
     public int dimension() {
         return dimension;
     }
@@ -219,11 +219,11 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
             for (int index = startIndex; index < endIndex; index++) {
                 final int bitIndex = (index - startIndex) * bitsPerEntry;
                 final int paletteIndex = (int) (value >> bitIndex & magicMask);
-                if (consumeEmpty || paletteIndex != 0) {
+                final int result = ids != null ? ids[paletteIndex] : paletteIndex;
+                if (consumeEmpty || result != 0) {
                     final int y = index >> shiftedDimensionBitCount;
                     final int z = index >> dimensionBitCount & dimensionMinus;
                     final int x = index & dimensionMinus;
-                    final int result = ids != null && paletteIndex < ids.length ? ids[paletteIndex] : paletteIndex;
                     consumer.accept(x, y, z, result);
                 }
             }
@@ -250,34 +250,52 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
     }
 
     void resize(byte newBitsPerEntry) {
-        newBitsPerEntry = newBitsPerEntry > maxBitsPerEntry() ? 15 : newBitsPerEntry;
-        PaletteIndirect palette = new PaletteIndirect(dimension, maxBitsPerEntry, newBitsPerEntry);
-        palette.paletteToValueList = paletteToValueList;
-        palette.valueToPaletteMap = valueToPaletteMap;
-        getAll(palette::set);
-        this.bitsPerEntry = palette.bitsPerEntry;
-        this.values = palette.values;
-        assert this.count == palette.count;
+        final boolean isDirect = newBitsPerEntry > maxBitsPerEntry;
+        newBitsPerEntry = isDirect ? directBitsPerEntry : newBitsPerEntry;
+        if (newBitsPerEntry == this.bitsPerEntry) return;
+        if (isDirect) {
+            this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
+                    this.paletteToValueList::getInt);
+        } else if (this.bitsPerEntry > newBitsPerEntry) {
+            this.paletteToValueList.clear();
+            this.valueToPaletteMap.clear();
+            this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
+                    (value) -> this.valueToPaletteMap.computeIfAbsent(value, (v) -> {
+                        final int lastPaletteIndex = this.paletteToValueList.size();
+                        this.paletteToValueList.add(v);
+                        return lastPaletteIndex;
+                    }));
+        } else {
+            this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
+                    (value) -> value);
+        }
+        this.bitsPerEntry = newBitsPerEntry;
     }
 
     private int getPaletteIndex(int value) {
         if (!hasPalette()) return value;
-        final int lastPaletteIndex = this.paletteToValueList.size();
-        final byte bpe = this.bitsPerEntry;
-        if (lastPaletteIndex >= maxPaletteSize(bpe)) {
-            // Palette is full, must resize
-            resize((byte) (bpe + 1));
-            return getPaletteIndex(value);
-        }
-        final int lookup = valueToPaletteMap.putIfAbsent(value, lastPaletteIndex);
-        if (lookup != -1) return lookup;
-        this.paletteToValueList.add(value);
-        assert lastPaletteIndex < maxPaletteSize(bpe);
-        return lastPaletteIndex;
+
+        return valueToPaletteMap.computeIfAbsent(value, (v) -> {
+            final int lastPaletteIndex = this.paletteToValueList.size();
+            final byte bpe = this.bitsPerEntry;
+            this.paletteToValueList.add(value);
+            if (lastPaletteIndex >= maxPaletteSize(bpe)) {
+                // Palette is full, must resize
+                resize((byte) (bpe + 1));
+                if (!hasPalette()) return value;
+            }
+            return lastPaletteIndex;
+        });
     }
 
     boolean hasPalette() {
         return bitsPerEntry <= maxBitsPerEntry();
+    }
+
+    void recount() {
+        AtomicInteger count = new AtomicInteger();
+        this.getAllPresent((x, y, z, value) -> count.setPlain(count.getPlain() + 1));
+        this.count = count.getPlain();
     }
 
     static int maxPaletteSize(int bitsPerEntry) {

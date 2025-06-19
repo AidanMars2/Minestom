@@ -16,6 +16,11 @@ interface SpecializedPalette extends Palette {
     }
 
     @Override
+    default int directBitsPerEntry() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     @NotNull SpecializedPalette clone();
 
     interface Immutable extends SpecializedPalette {

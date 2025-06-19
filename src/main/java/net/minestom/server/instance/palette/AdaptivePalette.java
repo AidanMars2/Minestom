@@ -11,14 +11,15 @@ import java.util.function.IntUnaryOperator;
  * Palette that switches between its backend based on the use case.
  */
 final class AdaptivePalette implements Palette, Cloneable {
-    final byte dimension, defaultBitsPerEntry, maxBitsPerEntry;
+    final byte dimension, directBitsPerEntry, maxBitsPerEntry, minBitsPerEntry;
     SpecializedPalette palette;
 
-    AdaptivePalette(byte dimension, byte maxBitsPerEntry, byte bitsPerEntry) {
+    AdaptivePalette(byte dimension, byte directBitsPerEntry, byte maxBitsPerEntry, byte minBitsPerEntry) {
         validateDimension(dimension);
         this.dimension = dimension;
+        this.directBitsPerEntry = directBitsPerEntry;
         this.maxBitsPerEntry = maxBitsPerEntry;
-        this.defaultBitsPerEntry = bitsPerEntry;
+        this.minBitsPerEntry = minBitsPerEntry;
         this.palette = new PaletteSingle(dimension, 0);
     }
 
@@ -89,6 +90,11 @@ final class AdaptivePalette implements Palette, Cloneable {
     }
 
     @Override
+    public int directBitsPerEntry() {
+        return directBitsPerEntry;
+    }
+
+    @Override
     public int dimension() {
         return dimension;
     }
@@ -114,13 +120,10 @@ final class AdaptivePalette implements Palette, Cloneable {
                 // Find all entries and compress the palette
                 IntSet entries = new IntOpenHashSet(paletteIndirect.paletteToValueList.size());
                 paletteIndirect.getAll((x, y, z, value) -> entries.add(value));
-                final int currentBitsPerEntry = paletteIndirect.bitsPerEntry();
-                final int bitsPerEntry;
                 if (entries.size() == 1) {
                     return new PaletteSingle(dimension, entries.iterator().nextInt());
-                } else if (currentBitsPerEntry > defaultBitsPerEntry &&
-                        (bitsPerEntry = MathUtils.bitsToRepresent(entries.size() - 1)) < currentBitsPerEntry) {
-                    paletteIndirect.resize((byte) bitsPerEntry);
+                } else {
+                    paletteIndirect.resize((byte) Math.max(minBitsPerEntry, MathUtils.bitsToRepresent(entries.size() - 1)));
                     return paletteIndirect;
                 }
             }
@@ -131,9 +134,13 @@ final class AdaptivePalette implements Palette, Cloneable {
     Palette flexiblePalette() {
         SpecializedPalette currentPalette = this.palette;
         if (currentPalette instanceof PaletteSingle paletteSingle) {
-            currentPalette = new PaletteIndirect(this);
-            currentPalette.fill(paletteSingle.value());
-            this.palette = currentPalette;
+            final PaletteIndirect newPalette = new PaletteIndirect(this);
+            newPalette.paletteToValueList.set(0, paletteSingle.value());
+            newPalette.valueToPaletteMap.clear();
+            newPalette.valueToPaletteMap.put(paletteSingle.value(), 0);
+
+            this.palette = newPalette;
+            return newPalette;
         }
         return currentPalette;
     }

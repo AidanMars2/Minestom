@@ -20,7 +20,7 @@ public class PaletteSetBenchmark {
 
     @Setup
     public void setup() {
-        palette = Palette.newPalette(dimension, 15, 4);
+        palette = Palette.newPalette(dimension, 15, 4, Integer.MAX_VALUE);
     }
 
     @Benchmark

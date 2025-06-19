@@ -1,5 +1,6 @@
 package net.minestom.server.instance.palette;
 
+import it.unimi.dsi.fastutil.ints.Int2IntFunction;
 import net.minestom.server.utils.MathUtils;
 
 import java.util.Arrays;
@@ -41,6 +42,36 @@ public final class Palettes {
         }
     }
 
+    public static long[] resize(byte newBitsPerEntry, byte bitsPerEntry, byte dimension,
+                                long[] values, Int2IntFunction transform) {
+        final long[] newValues = new long[arrayLength(dimension, newBitsPerEntry)];
+        final int magicMask = (1 << bitsPerEntry) - 1;
+        final int valuesPerLong = 64 / bitsPerEntry;
+        final int newValuesPerLong = 64 / newBitsPerEntry;
+        final int size = dimension * dimension * dimension;
+        int newValueIndex = 0;
+        int newValueSubIndex = 0;
+        long newValue = 0;
+        for (int i = 0; i < values.length; i++) {
+            final long value = values[i];
+            final int startIndex = i * valuesPerLong;
+            final int endIndex = Math.min(startIndex + valuesPerLong, size);
+            for (int index = startIndex; index < endIndex; index++) {
+                final int bitIndex = (index - startIndex) * bitsPerEntry;
+                final int paletteIndex = (int) (value >> bitIndex & magicMask);
+                final int result = transform.applyAsInt(paletteIndex);
+                newValue |= (long) result << (newValueSubIndex++ * newBitsPerEntry);
+                if (newValueSubIndex >= newValuesPerLong) {
+                    newValueSubIndex = 0;
+                    newValues[newValueIndex++] = newValue;
+                    newValue = 0;
+                }
+            }
+        }
+        if (newValueSubIndex != 0) newValues[newValueIndex] = newValue;
+        return newValues;
+    }
+
     public static int arrayLength(int dimension, int bitsPerEntry) {
         final int elementCount = dimension * dimension * dimension;
         final int valuesPerLong = 64 / bitsPerEntry;
@@ -75,17 +106,6 @@ public final class Palettes {
         long block = 0;
         for (int i = 0; i < valuesPerLong; i++) block |= (long) value << i * bitsPerEntry;
         Arrays.fill(values, block);
-    }
-
-    public static int count(int bitsPerEntry, long[] values) {
-        final int valuesPerLong = 64 / bitsPerEntry;
-        int count = 0;
-        for (long block : values) {
-            for (int i = 0; i < valuesPerLong; i++) {
-                count += (block >>> i * bitsPerEntry) & ((1 << bitsPerEntry) - 1);
-            }
-        }
-        return count;
     }
 
     public static int sectionIndex(int dimension, int x, int y, int z) {
