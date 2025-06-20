@@ -91,7 +91,8 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
 
     @Override
     public void fill(int value) {
-        Arrays.fill(values, 0);
+        // Skip array fill if it is zeroed anyway
+        if (paletteToValueList.size() != 1) Arrays.fill(values, 0);
         this.valueToPaletteMap.clear();
         this.paletteToValueList.clear();
         this.valueToPaletteMap.put(value, 0);
@@ -151,7 +152,7 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
             final int newValue = function.apply(x, y, z, value);
             final int index = arrayIndex.getPlain();
             arrayIndex.setPlain(index + 1);
-            cache[index] = newValue != value ? getPaletteIndex(newValue) : value;
+            cache[index] = getPaletteIndex(newValue);
             if (newValue != 0) count.setPlain(count.getPlain() + 1);
         });
         assert arrayIndex.getPlain() == maxSize();
@@ -256,14 +257,16 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
         if (isDirect) {
             this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
                     this.paletteToValueList::getInt);
-        } else if (this.bitsPerEntry > newBitsPerEntry) {
-            this.paletteToValueList.clear();
+        } else if (newBitsPerEntry > this.bitsPerEntry) {
+            this.valueToPaletteMap.clear();
             final IntArrayList newPaletteToValueList = new IntArrayList();
+            final boolean wasDirect = !hasPalette();
             this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
-                    (value) -> this.valueToPaletteMap.computeIfAbsent(value, (v) -> {
-                        final int lastPaletteIndex = newPaletteToValueList.size();
-                        newPaletteToValueList.add(v);
-                        return lastPaletteIndex;
+                    (value) -> this.valueToPaletteMap.computeIfAbsent(wasDirect ? value : this.paletteToValueList.getInt(value),
+                            (v) -> {
+                                final int lastPaletteIndex = newPaletteToValueList.size();
+                                newPaletteToValueList.add(v);
+                                return lastPaletteIndex;
                     }));
             this.paletteToValueList = newPaletteToValueList;
         } else {

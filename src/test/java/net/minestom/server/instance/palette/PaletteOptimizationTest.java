@@ -47,13 +47,13 @@ public class PaletteOptimizationTest {
     @Test
     public void downsize() {
         var palette = createPalette();
-        palette.setAll((x, y, z) -> x + y * 16 + z * 256);
-        assertEquals(palette.bitsPerEntry(), palette.directBitsPerEntry());
-        palette.setAll((x, y, z) -> x + y * 16);
+        palette.setAll((x, y, z) -> x + y * 16 + z * 256 + 1);
+        assertEquals(palette.directBitsPerEntry(), palette.bitsPerEntry());
+        palette.setAll((x, y, z) -> x + y * 16 + 1);
         var optimized = palette.optimizedPalette();
         assertEquals(8, optimized.bitsPerEntry());
         paletteEquals(palette, optimized);
-        palette.setAll((x, y, z) -> x);
+        palette.setAll((x, y, z) -> x + 1);
         optimized = palette.optimizedPalette();
         assertEquals(4, optimized.bitsPerEntry());
         paletteEquals(palette, optimized);

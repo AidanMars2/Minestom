@@ -102,7 +102,7 @@ public interface Palette {
                     case AdaptivePalette adaptive -> {
                         final SpecializedPalette optimized = adaptive.optimizedPalette();
                         adaptive.palette = optimized;
-                        BLOCK_SERIALIZER.write(buffer, optimized);
+                        this.write(buffer, optimized);
                     }
                     case PaletteSingle single -> {
                         buffer.write(BYTE, (byte) 0);
@@ -110,7 +110,7 @@ public interface Palette {
                     }
                     case PaletteIndirect indirect -> {
                         buffer.write(BYTE, (byte) value.bitsPerEntry());
-                        if (indirect.bitsPerEntry() <= indirect.maxBitsPerEntry()) { // Palette index
+                        if (indirect.hasPalette()) { // Palette index
                             buffer.write(VAR_INT.list(), indirect.paletteToValueList);
                         }
                         for (long l : indirect.values) {

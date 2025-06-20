@@ -134,13 +134,10 @@ final class AdaptivePalette implements Palette, Cloneable {
     Palette flexiblePalette() {
         SpecializedPalette currentPalette = this.palette;
         if (currentPalette instanceof PaletteSingle paletteSingle) {
-            final PaletteIndirect newPalette = new PaletteIndirect(this);
-            newPalette.paletteToValueList.set(0, paletteSingle.value());
-            newPalette.valueToPaletteMap.clear();
-            newPalette.valueToPaletteMap.put(paletteSingle.value(), 0);
+            currentPalette = new PaletteIndirect(this);
+            currentPalette.fill(paletteSingle.value());
 
-            this.palette = newPalette;
-            return newPalette;
+            this.palette = currentPalette;
         }
         return currentPalette;
     }

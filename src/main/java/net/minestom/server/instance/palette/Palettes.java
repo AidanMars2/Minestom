@@ -59,7 +59,7 @@ public final class Palettes {
             for (int index = startIndex; index < endIndex; index++) {
                 final int bitIndex = (index - startIndex) * bitsPerEntry;
                 final int paletteIndex = (int) (value >> bitIndex & magicMask);
-                final int result = transform.applyAsInt(paletteIndex);
+                final int result = transform.get(paletteIndex);
                 newValue |= (long) result << (newValueSubIndex++ * newBitsPerEntry);
                 if (newValueSubIndex >= newValuesPerLong) {
                     newValueSubIndex = 0;
