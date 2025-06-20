@@ -257,7 +257,7 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
         if (isDirect) {
             this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
                     this.paletteToValueList::getInt);
-        } else if (newBitsPerEntry > this.bitsPerEntry) {
+        } else if (newBitsPerEntry < this.bitsPerEntry) {
             this.valueToPaletteMap.clear();
             final IntArrayList newPaletteToValueList = new IntArrayList();
             final boolean wasDirect = !hasPalette();
