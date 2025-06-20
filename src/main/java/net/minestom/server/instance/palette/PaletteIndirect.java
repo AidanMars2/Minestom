@@ -258,13 +258,14 @@ final class PaletteIndirect implements SpecializedPalette, Cloneable {
                     this.paletteToValueList::getInt);
         } else if (this.bitsPerEntry > newBitsPerEntry) {
             this.paletteToValueList.clear();
-            this.valueToPaletteMap.clear();
+            final IntArrayList newPaletteToValueList = new IntArrayList();
             this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
                     (value) -> this.valueToPaletteMap.computeIfAbsent(value, (v) -> {
-                        final int lastPaletteIndex = this.paletteToValueList.size();
-                        this.paletteToValueList.add(v);
+                        final int lastPaletteIndex = newPaletteToValueList.size();
+                        newPaletteToValueList.add(v);
                         return lastPaletteIndex;
                     }));
+            this.paletteToValueList = newPaletteToValueList;
         } else {
             this.values = Palettes.resize(newBitsPerEntry, this.bitsPerEntry, this.dimension, this.values,
                     (value) -> value);

@@ -44,6 +44,21 @@ public class PaletteOptimizationTest {
         paletteEquals(palette.palette, palette.optimizedPalette());
     }
 
+    @Test
+    public void downsize() {
+        var palette = createPalette();
+        palette.setAll((x, y, z) -> x + y * 16 + z * 256);
+        assertEquals(palette.bitsPerEntry(), palette.directBitsPerEntry());
+        palette.setAll((x, y, z) -> x + y * 16);
+        var optimized = palette.optimizedPalette();
+        assertEquals(8, optimized.bitsPerEntry());
+        paletteEquals(palette, optimized);
+        palette.setAll((x, y, z) -> x);
+        optimized = palette.optimizedPalette();
+        assertEquals(4, optimized.bitsPerEntry());
+        paletteEquals(palette, optimized);
+    }
+
     AdaptivePalette createPalette() {
         return (AdaptivePalette) Palette.blocks();
     }
