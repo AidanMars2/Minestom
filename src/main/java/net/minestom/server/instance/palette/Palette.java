@@ -1,5 +1,7 @@
 package net.minestom.server.instance.palette;
 
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minestom.server.network.NetworkBuffer;
 import net.minestom.server.utils.MathUtils;
 import org.jetbrains.annotations.ApiStatus;
@@ -61,19 +63,19 @@ public sealed interface Palette permits PaletteImpl {
 
     void set(int x, int y, int z, int value);
 
+    void setAll(@NotNull EntrySupplier supplier);
+
     void fill(int value);
 
-    void load(int[] palette, long[] values);
-
-    void offset(int offset);
-
     void replace(int oldValue, int newValue);
-
-    void setAll(@NotNull EntrySupplier supplier);
 
     void replace(int x, int y, int z, @NotNull IntUnaryOperator operator);
 
     void replaceAll(@NotNull EntryFunction function);
+
+    void load(int[] palette, long[] values);
+
+    void offset(int offset);
 
     /**
      * Efficiently copies values from another palette with the given offset.
@@ -226,30 +228,27 @@ public sealed interface Palette permits PaletteImpl {
             @Override
             public PaletteImpl read(@NotNull NetworkBuffer buffer) {
                 final byte bitsPerEntry = buffer.read(BYTE);
+                PaletteImpl result = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits);
+                result.bitsPerEntry = bitsPerEntry;
                 if (bitsPerEntry == 0) {
                     // Single value palette
-                    final int value = buffer.read(VAR_INT);
-                    PaletteImpl palette = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits);
-                    palette.count = value;
-                    return palette;
-                } else if (bitsPerEntry >= minIndirect && bitsPerEntry <= maxIndirect) {
+                    result.count = buffer.read(VAR_INT);
+                    return result;
+                }
+                if (result.hasPalette()) {
                     // Indirect palette
                     final int[] palette = buffer.read(VAR_INT_ARRAY);
-                    int entriesPerLong = 64 / bitsPerEntry;
-                    final long[] data = new long[(dimension * dimension * dimension) / entriesPerLong + 1];
-                    for (int i = 0; i < data.length; i++) data[i] = buffer.read(LONG);
-                    return new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits, bitsPerEntry,
-                            Palettes.count(bitsPerEntry, data),
-                            palette, data);
-                } else {
-                    // Direct palette
-                    final int length = Palettes.arrayLength(dimension, bitsPerEntry);
-                    final long[] data = new long[length];
-                    for (int i = 0; i < length; i++) data[i] = buffer.read(LONG);
-                    return new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits, bitsPerEntry,
-                            Palettes.count(bitsPerEntry, data),
-                            new int[0], data);
+                    result.paletteToValueList = new IntArrayList(palette);
+                    result.valueToPaletteMap = new Int2IntOpenHashMap(palette.length);
+                    for (int i = 0; i < palette.length; i++) {
+                        result.valueToPaletteMap.put(palette[i], i);
+                    }
                 }
+                final long[] data = new long[Palettes.arrayLength(dimension, bitsPerEntry)];
+                for (int i = 0; i < data.length; i++) data[i] = buffer.read(LONG);
+                result.values = data;
+                result.recount();
+                return result;
             }
         };
     }

@@ -85,13 +85,13 @@ public final class Palettes {
         int newBitIndex = 0;
         outer: {
             for (int i = 0; i < values.length; i++) {
-                final long value = values[i];
+                long value = values[i];
                 final int startIndex = i * oldValuesPerLong;
                 final int endIndex = Math.min(startIndex + oldValuesPerLong, size);
                 for (int index = startIndex; index < endIndex; index++) {
-                    final int bitIndex = (index - startIndex) * oldBitsPerEntry;
-                    final int paletteIndex = (int) (value >> bitIndex & magicMask);
-                    newValue |= (long) function.get(paletteIndex) << (newBitIndex++ * newBitsPerEntry);
+                    final int paletteIndex = (int) (value & magicMask);
+                    value >>>= oldBitsPerEntry;
+                    newValue |= ((long) function.get(paletteIndex)) << (newBitIndex++ * newBitsPerEntry);
                     if (newBitIndex >= newValuesPerLong) {
                         result[newValueIndex++] = newValue;
                         if (newValueIndex == result.length) {
@@ -102,7 +102,7 @@ public final class Palettes {
                     }
                 }
             }
-            if (newBitIndex != 0) result[newValueIndex] = newValue;
+            result[newValueIndex] = newValue;
         }
         return result;
     }
