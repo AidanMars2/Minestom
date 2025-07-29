@@ -15,7 +15,8 @@ import static net.minestom.server.instance.palette.Palettes.*;
 
 final class PaletteImpl implements Palette {
     private static final ThreadLocal<int[]> WRITE_CACHE = ThreadLocal.withInitial(() -> new int[SECTION_BLOCK_COUNT]);
-    final byte dimension, minBitsPerEntry, maxBitsPerEntry, directBits;
+    final byte dimension, minBitsPerEntry, maxBitsPerEntry;
+    byte directBits;
 
     byte bitsPerEntry = 0;
     int count = 0; // Serve as the single value if bitsPerEntry == 0
@@ -101,6 +102,7 @@ final class PaletteImpl implements Palette {
 
     @Override
     public void fill(int value) {
+        checkValue(value, false);
         this.bitsPerEntry = 0;
         this.count = value;
         this.values = null;
@@ -112,6 +114,8 @@ final class PaletteImpl implements Palette {
     public void load(int[] palette, long[] values) {
         int bpe = palette.length <= 1 ? 0 : MathUtils.bitsToRepresent(palette.length - 1);
         bpe = Math.max(minBitsPerEntry, bpe);
+        validateValues(dimension, (byte) bpe, palette.length, values);
+        for (int v : palette) checkValue(v, false);
 
         if (bpe > maxBitsPerEntry) {
             // Direct mode: convert from palette indices to direct values
@@ -120,7 +124,7 @@ final class PaletteImpl implements Palette {
             this.values = new long[arrayLength(dimension, directBits)];
 
             final AtomicInteger nonZeroCount = new AtomicInteger();
-            this.values = Palettes.remap(this.dimension, bpe, directBits, values, (paletteIndex) -> {
+            this.values = Palettes.remap(this.dimension, bpe, directBits, values, true, (paletteIndex) -> {
                 final int directValue = paletteIndex < palette.length ? palette[paletteIndex] : 0;
                 if (directValue != 0) nonZeroCount.setPlain(nonZeroCount.getPlain() + 1);
                 return directValue;
@@ -153,6 +157,7 @@ final class PaletteImpl implements Palette {
     @Override
     public void replace(int oldValue, int newValue) {
         if (oldValue == newValue) return;
+        checkValue(newValue, false);
         if (bitsPerEntry == 0) {
             if (oldValue == count) fill(newValue);
         } else {
@@ -172,7 +177,8 @@ final class PaletteImpl implements Palette {
                     this.count += count; // Replacing air with a block
                 }
             } else {
-                replaceAll((x, y, z, value) -> value == oldValue ? newValue : value);
+                this.values = Palettes.remap(dimension, bitsPerEntry, directBits, values,
+                        v -> v == oldValue ? newValue : v);
             }
         }
     }
@@ -185,6 +191,7 @@ final class PaletteImpl implements Palette {
         int fillValue = -1;
         int count = 0;
         int index = 0;
+        int maxValue = 0;
         for (int y = 0; y < dimension; y++) {
             for (int z = 0; z < dimension; z++) {
                 for (int x = 0; x < dimension; x++) {
@@ -197,6 +204,7 @@ final class PaletteImpl implements Palette {
                             fillValue = -2;
                         }
                     }
+                    maxValue = Math.max(maxValue, value);
                     // Set value in cache
                     if (value != 0) count++;
                     cache[index++] = value;
@@ -206,7 +214,7 @@ final class PaletteImpl implements Palette {
         assert index == maxSize();
         // Update palette content
         if (fillValue < 0) {
-            updateAll(cache);
+            updateAll(cache, maxValue);
             this.count = count;
         } else {
             fill(fillValue);
@@ -226,16 +234,18 @@ final class PaletteImpl implements Palette {
         int[] cache = WRITE_CACHE.get();
         AtomicInteger arrayIndex = new AtomicInteger();
         AtomicInteger count = new AtomicInteger();
+        AtomicInteger maxValue = new AtomicInteger();
         getAll((x, y, z, value) -> {
             final int newValue = function.apply(x, y, z, value);
             final int index = arrayIndex.getPlain();
             arrayIndex.setPlain(index + 1);
+            maxValue.setPlain(Math.max(maxValue.getPlain(), newValue));
             cache[index] = newValue;
             if (newValue != 0) count.setPlain(count.getPlain() + 1);
         });
         assert arrayIndex.getPlain() == maxSize();
         // Update palette content
-        updateAll(cache);
+        updateAll(cache, maxValue.getPlain());
         this.count = count.getPlain();
     }
 
@@ -380,6 +390,7 @@ final class PaletteImpl implements Palette {
         // Copy
         this.bitsPerEntry = sourcePalette.bitsPerEntry;
         this.count = sourcePalette.count;
+        if (this.directBits != sourcePalette.directBits) this.directBits = sourcePalette.directBits;
 
         if (sourcePalette.values != null) {
             this.values = sourcePalette.values.clone();
@@ -415,7 +426,7 @@ final class PaletteImpl implements Palette {
         if (value == 0) return maxSize() - count();
         int queryValue = valueToPalettIndexOrDefault(value);
         if (queryValue == -1) return 0;
-        return countPaletteValue(queryValue);
+        return Palettes.count(dimension, bitsPerEntry, queryValue, values);
     }
 
     @Override
@@ -526,6 +537,7 @@ final class PaletteImpl implements Palette {
 
     @Override
     public int valueToPaletteIndex(int value) {
+        checkValue(value, true);
         if (!hasPalette()) return value;
         if (values == null) initIndirect();
 
@@ -540,6 +552,11 @@ final class PaletteImpl implements Palette {
             this.paletteToValueList.add(v);
             return lastPaletteIndex;
         });
+    }
+
+    /// Assumes {@link PaletteImpl#bitsPerEntry} != 0
+    int valueToPalettIndexOrDefault(int value) {
+        return hasPalette() ? valueToPaletteMap.getOrDefault(value, -1) : value;
     }
 
     @Override
@@ -614,12 +631,16 @@ final class PaletteImpl implements Palette {
         }
     }
 
-    private void updateAll(int[] paletteValues) {
+    private void updateAll(int[] paletteValues, int maxValue) {
+        checkValue(maxValue, false);
         if (hasPalette()) {
             this.bitsPerEntry = directBits;
             this.values = new long[arrayLength(dimension, directBits)];
             this.valueToPaletteMap = null;
             this.paletteToValueList = null;
+        } else if (bitsPerEntry != directBits) {
+            this.values = new long[arrayLength(dimension, directBits)];
+            this.bitsPerEntry = directBits;
         }
         final int size = maxSize();
         assert paletteValues.length >= size;
@@ -709,42 +730,41 @@ final class PaletteImpl implements Palette {
         this.count = fillValue == 0 ? 0 : maxSize();
     }
 
+    void checkValue(int value, boolean resize) {
+        final byte valueBits = (byte) MathUtils.bitsToRepresent(value);
+        if (directBits < valueBits) {
+            if (!hasPalette() && resize) {
+                this.values = Palettes.remap(dimension, bitsPerEntry, valueBits, values, v -> v);
+                this.bitsPerEntry = valueBits;
+            }
+            this.directBits = valueBits;
+        }
+    }
+
     boolean hasPalette() {
         return bitsPerEntry <= maxBitsPerEntry;
     }
 
-    /// Assumes {@link PaletteImpl#bitsPerEntry} != 0
-    int valueToPalettIndexOrDefault(int value) {
-        return hasPalette() ? valueToPaletteMap.getOrDefault(value, -1) : value;
-    }
-
     void recount() {
         if (bitsPerEntry == 0) return;
-        int searchValue = valueToPalettIndexOrDefault(0);
-        if (searchValue == -1) {
+        int queryValue = valueToPalettIndexOrDefault(0);
+        if (queryValue == -1) {
             this.count = maxSize();
             return;
         }
-        this.count = maxSize() - countPaletteValue(searchValue);
+        this.count = maxSize() - Palettes.count(dimension, bitsPerEntry, queryValue, values);
     }
 
-    /// Assumes {@link PaletteImpl#bitsPerEntry} != 0
-    private int countPaletteValue(int paletteValue) {
-        // Scan through the values
-        int result = 0;
-        final int size = maxSize();
-        final int bits = bitsPerEntry;
-        final int valuesPerLong = 64 / bits;
-        final int mask = (1 << bits) - 1;
-        for (int i = 0, idx = 0; i < values.length; i++) {
-            long block = values[i];
-            int end = Math.min(valuesPerLong, size - idx);
-            for (int j = 0; j < end; j++, idx++) {
-                if (((int) (block & mask)) == paletteValue) result++;
-                block >>>= bits;
-            }
-        }
-        return result;
+    void printState() {
+        String stateString = "palette state:" +
+                "\n- dimension: " + dimension +
+                "\n- bpe: " + bitsPerEntry +
+                "\n- count: " + count +
+                "\n- value -> palette: " + valueToPaletteMap +
+                "\n- palette -> value: " + paletteToValueList +
+                "\n- values: " + Arrays.toString(values);
+
+        System.out.println(stateString);
     }
 
     private static void validateCoord(int dimension, int x, int y, int z) {

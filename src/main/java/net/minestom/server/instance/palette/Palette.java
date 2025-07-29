@@ -2,8 +2,10 @@ package net.minestom.server.instance.palette;
 
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import net.minestom.server.MinecraftServer;
 import net.minestom.server.network.NetworkBuffer;
 import net.minestom.server.utils.MathUtils;
+import net.minestom.server.world.biome.Biome;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -26,15 +28,13 @@ public sealed interface Palette permits PaletteImpl {
     int BIOME_DIMENSION = 4;
     int BIOME_PALETTE_MIN_BITS = 1;
     int BIOME_PALETTE_MAX_BITS = 3;
-    @ApiStatus.Internal
-    int BIOME_PALETTE_DIRECT_BITS = 6; // Vary based on biome count, this is just a sensible default
 
     static Palette blocks(int bitsPerEntry) {
         return sized(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_DIRECT_BITS, bitsPerEntry);
     }
 
     static Palette biomes(int bitsPerEntry) {
-        return sized(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, BIOME_PALETTE_DIRECT_BITS, bitsPerEntry);
+        return sized(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, getBiomeDirectBits(), bitsPerEntry);
     }
 
     static Palette blocks() {
@@ -42,7 +42,11 @@ public sealed interface Palette permits PaletteImpl {
     }
 
     static Palette biomes() {
-        return empty(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, BIOME_PALETTE_DIRECT_BITS);
+        return empty(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, getBiomeDirectBits());
+    }
+
+    private static int getBiomeDirectBits() {
+        return MathUtils.bitsToRepresent(MinecraftServer.getBiomeRegistry().size() - 1);
     }
 
     static Palette empty(int dimension, int minBitsPerEntry, int maxBitsPerEntry, int directBits) {
@@ -203,16 +207,10 @@ public sealed interface Palette permits PaletteImpl {
     }
 
     static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int directBits) {
-        //noinspection unchecked
+        //noinspection unchecked,rawtypes
         return (NetworkBuffer.Type) new NetworkBuffer.Type<PaletteImpl>() {
             @Override
             public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
-                // Temporary fix for biome direct bits depending on the number of registered biomes
-                if (directBits != value.directBits && !value.hasPalette()) {
-                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits);
-                    tmp.setAll(value::get);
-                    value = tmp;
-                }
                 final byte bitsPerEntry = value.bitsPerEntry;
                 buffer.write(BYTE, bitsPerEntry);
                 if (bitsPerEntry == 0) {
@@ -221,7 +219,15 @@ public sealed interface Palette permits PaletteImpl {
                     if (value.hasPalette()) {
                         buffer.write(VAR_INT.list(), value.paletteToValueList);
                     }
-                    for (long l : value.values) buffer.write(LONG, l);
+                    long[] data = value.values;
+                    // Fix for biome direct bits depending on the number of registered biomes
+                    if (directBits < value.directBits) throw new IllegalStateException("Palette has out of bounds values");
+                    if (directBits != value.directBits && !value.hasPalette()) {
+                        data = Palettes.remap(dimension, value.bitsPerEntry, directBits, data, v -> v);
+                        value.bitsPerEntry = (byte) directBits;
+                        value.directBits = (byte) directBits;
+                    }
+                    for (long l : data) buffer.write(LONG, l);
                 }
             }
 
@@ -246,6 +252,8 @@ public sealed interface Palette permits PaletteImpl {
                 }
                 final long[] data = new long[Palettes.arrayLength(dimension, bitsPerEntry)];
                 for (int i = 0; i < data.length; i++) data[i] = buffer.read(LONG);
+                if (result.hasPalette()) Palettes.validateValues((byte) dimension, bitsPerEntry,
+                        result.paletteToValueList.size(), data);
                 result.values = data;
                 result.recount();
                 return result;

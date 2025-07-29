@@ -706,9 +706,7 @@ public class PaletteTest {
         for (int i = 0; i < 64; i++) {
             int longIndex = i / 21; // 21 values per long with 3 bits each (63 bits used)
             int bitIndex = (i % 21) * 3;
-            if (longIndex < values.length) {
-                values[longIndex] |= ((long) (i % 5)) << bitIndex;
-            }
+            values[longIndex] |= ((long) (i % 5)) << bitIndex;
         }
 
         palette.load(paletteData, values);
@@ -791,7 +789,7 @@ public class PaletteTest {
         // Test that values array is properly cloned
         Palette palette = Palette.sized(4, 2, 6, 15, 2);
 
-        int[] paletteData = {0, 1, 2};
+        int[] paletteData = {0, 1, 2, 3};
         long[] originalValues = {0x123456789ABCDEFL, 0xFEDCBA9876543210L};
 
         palette.load(paletteData, originalValues);

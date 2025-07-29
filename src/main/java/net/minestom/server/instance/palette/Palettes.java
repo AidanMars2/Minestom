@@ -2,9 +2,11 @@ package net.minestom.server.instance.palette;
 
 import it.unimi.dsi.fastutil.ints.Int2IntFunction;
 import net.minestom.server.utils.MathUtils;
+import org.jetbrains.annotations.ApiStatus;
 
 import java.util.Arrays;
 
+@ApiStatus.Internal
 public final class Palettes {
     private Palettes() {
     }
@@ -73,9 +75,49 @@ public final class Palettes {
         return (int) oldBlock;
     }
 
+    public static void fill(int bitsPerEntry, long[] values, int value) {
+        final int valuesPerLong = 64 / bitsPerEntry;
+        long block = 0;
+        for (int i = 0; i < valuesPerLong; i++) block |= (long) value << i * bitsPerEntry;
+        Arrays.fill(values, block);
+    }
+
+    public static int count(int bitsPerEntry, long[] values) {
+        final int valuesPerLong = 64 / bitsPerEntry;
+        int count = 0;
+        for (long block : values) {
+            for (int i = 0; i < valuesPerLong; i++) {
+                count += (int) ((block >>> i * bitsPerEntry) & ((1 << bitsPerEntry) - 1));
+            }
+        }
+        return count;
+    }
+
+    public static int sectionIndex(int dimension, int x, int y, int z) {
+        final int dimensionBitCount = MathUtils.bitsToRepresent(dimension - 1);
+        return y << (dimensionBitCount << 1) | z << dimensionBitCount | x;
+    }
+
+    // Optimized operations
+
+    public static void getAllFill(byte dimension, int value, Palette.EntryConsumer consumer) {
+        for (byte y = 0; y < dimension; y++)
+            for (byte z = 0; z < dimension; z++)
+                for (byte x = 0; x < dimension; x++)
+                    consumer.accept(x, y, z, value);
+    }
+
     public static long[] remap(int dimension, int oldBitsPerEntry, int newBitsPerEntry,
                                long[] values, Int2IntFunction function) {
-        final long[] result = new long[arrayLength(dimension, newBitsPerEntry)];
+        return remap(dimension, oldBitsPerEntry, newBitsPerEntry, values, false, function);
+    }
+
+    public static long[] remap(int dimension, int oldBitsPerEntry, int newBitsPerEntry,
+                               long[] values, boolean forceCopy, Int2IntFunction function) {
+        final int newLength = arrayLength(dimension, newBitsPerEntry);
+        // Avoid reallocation if unnecessary
+        final long[] result = (values.length == newLength && oldBitsPerEntry >= newBitsPerEntry)
+                || forceCopy ? new long[newLength] : values;
         final int magicMask = (1 << oldBitsPerEntry) - 1;
         final int oldValuesPerLong = 64 / oldBitsPerEntry;
         final int newValuesPerLong = (64 / newBitsPerEntry);
@@ -107,35 +149,91 @@ public final class Palettes {
         return result;
     }
 
-    public static void fill(int bitsPerEntry, long[] values, int value) {
-        final int valuesPerLong = 64 / bitsPerEntry;
-        long block = 0;
-        for (int i = 0; i < valuesPerLong; i++) block |= (long) value << i * bitsPerEntry;
-        Arrays.fill(values, block);
-    }
+    public static int count(byte dimension, byte bitsPerEntry, int queryValue, long[] values) {
+        final int size = dimension * dimension * dimension;
+        if (bitsPerEntry == 1) {
+            final int remEntries = size & 63;
+            final int fullWords = size >> 6;
 
-    public static int count(int bitsPerEntry, long[] values) {
-        final int valuesPerLong = 64 / bitsPerEntry;
-        int count = 0;
-        for (long block : values) {
-            for (int i = 0; i < valuesPerLong; i++) {
-                count += (int) ((block >>> i * bitsPerEntry) & ((1 << bitsPerEntry) - 1));
+            int total = 0;
+            if (remEntries != 0) {
+                final long v = values[fullWords] & (1L << remEntries) - 1;
+                total += queryValue == 0 ? remEntries - Long.bitCount(v) : Long.bitCount(v);
             }
+
+            for (int i = 0; i < fullWords; i++) {
+                final long v = values[i];
+                total += queryValue == 0 ? 64 - Long.bitCount(v) : Long.bitCount(v);
+            }
+            return total;
         }
+
+        final int blocks = 64 / bitsPerEntry;
+        final int fullWords = size / blocks;
+        final int remEntries = size - (fullWords * blocks);
+
+        long swarSplat = 1L;
+        for (int i = bitsPerEntry; i < 64; i <<= 1) swarSplat |= swarSplat << i;
+        final long signMask = (1L << (bitsPerEntry - 1)) * swarSplat;
+        final long repCompare = ((long) queryValue) * swarSplat;
+        final long lowMask = ~signMask;
+
+        int count = 0;
+        if (remEntries != 0) {
+            final long lastSignMask = signMask >>> ((blocks - remEntries) * bitsPerEntry);
+            final long v = values[fullWords];
+            final long xored = v ^ repCompare;
+            final long tmp = (xored & lowMask) + lowMask;
+            final long eq = ~(tmp | xored | lowMask);
+            count += Long.bitCount(eq & lastSignMask);
+        }
+
+        for (int i = 0; i < fullWords; i++) {
+            final long v = values[i];
+            final long xored = v ^ repCompare;
+            final long tmp = (xored & lowMask) + lowMask;
+            final long eq = ~(tmp | xored | lowMask);
+            count += Long.bitCount(eq);
+        }
+
         return count;
     }
 
-    public static int sectionIndex(int dimension, int x, int y, int z) {
-        final int dimensionBitCount = MathUtils.bitsToRepresent(dimension - 1);
-        return y << (dimensionBitCount << 1) | z << dimensionBitCount | x;
-    }
+    public static void validateValues(byte dimension, byte bitsPerEntry, int paletteSize, long[] values) {
+        if (paletteSize >= (1L << bitsPerEntry) || bitsPerEntry == 1) return;
 
-    // Optimized operations
+        final int size = dimension * dimension * dimension;
+        final int blocks = 64 / bitsPerEntry;
+        int fullWords = size / blocks;
+        int remEntries = size - (fullWords * blocks);
 
-    public static void getAllFill(byte dimension, int value, Palette.EntryConsumer consumer) {
-        for (byte y = 0; y < dimension; y++)
-            for (byte z = 0; z < dimension; z++)
-                for (byte x = 0; x < dimension; x++)
-                    consumer.accept(x, y, z, value);
+        if (values.length < fullWords) {
+            remEntries = 0;
+            fullWords = values.length;
+        }
+
+        long swarSplat = 1L;
+        for (int i = bitsPerEntry; i < 64; i <<= 1) swarSplat |= swarSplat << i;
+        final long signMask = (1L << (bitsPerEntry - 1)) * swarSplat;
+        final long repCompare = ((long) paletteSize) * swarSplat;
+        final long lowMask = ~signMask;
+
+        // No early return, assume values are valid
+        boolean valid = true;
+        if (remEntries != 0) {
+            final long lastSignMask = signMask >>> ((blocks - remEntries) * bitsPerEntry);
+            final long v = ~values[fullWords];
+            final long t = (v & repCompare) + (((v ^ repCompare) >>> 1) & lowMask);
+
+            valid &= (t & lastSignMask) == lastSignMask;
+        }
+
+        for (int i = 0; i < fullWords; i++) {
+            final long v = ~values[i];
+            final long t = (v & repCompare) + (((v ^ repCompare) >>> 1) & lowMask);
+
+            valid &= (t & signMask) == signMask;
+        }
+        if (!valid) throw new IllegalArgumentException("Palette index out of bounds");
     }
 }
