@@ -331,10 +331,10 @@ final class PaletteImpl implements Palette {
         final int sourceBitsPerEntry = sourcePalette.bitsPerEntry;
         final int sourceMask = (1 << sourceBitsPerEntry) - 1;
         final int sourceValuesPerLong = 64 / sourceBitsPerEntry;
-        final int sourceDimensionBitCount = MathUtils.bitsToRepresent(sourceDimension - 1);
-        final int sourceShiftedDimensionBitCount = sourceDimensionBitCount << 1;
+        final int indexXShift = MathUtils.bitsToRepresent(sourceDimension - 1);
+        final int indexYShift = indexXShift << 1;
         final int[] sourcePaletteIds = sourcePalette.hasPalette() ? sourcePalette.paletteToValueList.elements() : null;
-        final int airPaletteValue = valueToPalettIndexOrDefault(0);
+        final int targetAirPaletteValue = valueToPalettIndexOrDefault(0);
 
         int countDelta = 0;
         for (int y = 0; y < maxY; y++) {
@@ -344,7 +344,7 @@ final class PaletteImpl implements Palette {
                 for (int x = 0; x < maxX; x++) {
                     final int targetX = offsetX + x;
 
-                    final int sourceIndex = y << sourceShiftedDimensionBitCount | z << sourceDimensionBitCount | x;
+                    final int sourceIndex = y << indexYShift | z << indexXShift | x;
                     final int longIndex = sourceIndex / sourceValuesPerLong;
                     final int bitIndex = (sourceIndex - longIndex * sourceValuesPerLong) * sourceBitsPerEntry;
                     final int sourcePaletteIndex = (int) (sourceValues[longIndex] >> bitIndex) & sourceMask;
@@ -356,11 +356,9 @@ final class PaletteImpl implements Palette {
                     final int oldValue = Palettes.write(targetDimension, bitsPerEntry, values, targetX, targetY, targetZ, targetPaletteIndex);
 
                     // Update count
-                    final boolean wasAir = oldValue == (hasPalette() ? airPaletteValue : 0);
+                    final boolean wasAir = oldValue == targetAirPaletteValue;
                     final boolean isAir = sourceValue == 0;
-                    if (wasAir != isAir) {
-                        countDelta += wasAir ? 1 : -1;
-                    }
+                    if (wasAir != isAir) countDelta += wasAir ? 1 : -1;
                 }
             }
         }
@@ -378,6 +376,8 @@ final class PaletteImpl implements Palette {
                     ") must equal target palette dimension (" + targetDimension + ")");
         }
 
+        this.directBits = sourcePalette.directBits;
+
         if (sourcePalette.bitsPerEntry == 0) {
             fill(sourcePalette.count);
             return;
@@ -390,7 +390,6 @@ final class PaletteImpl implements Palette {
         // Copy
         this.bitsPerEntry = sourcePalette.bitsPerEntry;
         this.count = sourcePalette.count;
-        if (this.directBits != sourcePalette.directBits) this.directBits = sourcePalette.directBits;
 
         if (sourcePalette.values != null) {
             this.values = sourcePalette.values.clone();
@@ -719,6 +718,7 @@ final class PaletteImpl implements Palette {
         }
     }
 
+    /// Assumes {@link PaletteImpl#bitsPerEntry} == 0
     void initIndirect() {
         final int fillValue = this.count;
         this.valueToPaletteMap = new Int2IntOpenHashMap();
@@ -731,6 +731,7 @@ final class PaletteImpl implements Palette {
     }
 
     void checkValue(int value, boolean resize) {
+        if (value == 0) return;
         final byte valueBits = (byte) MathUtils.bitsToRepresent(value);
         if (directBits < valueBits) {
             if (!hasPalette() && resize) {
@@ -753,18 +754,6 @@ final class PaletteImpl implements Palette {
             return;
         }
         this.count = maxSize() - Palettes.count(dimension, bitsPerEntry, queryValue, values);
-    }
-
-    void printState() {
-        String stateString = "palette state:" +
-                "\n- dimension: " + dimension +
-                "\n- bpe: " + bitsPerEntry +
-                "\n- count: " + count +
-                "\n- value -> palette: " + valueToPaletteMap +
-                "\n- palette -> value: " + paletteToValueList +
-                "\n- values: " + Arrays.toString(values);
-
-        System.out.println(stateString);
     }
 
     private static void validateCoord(int dimension, int x, int y, int z) {
