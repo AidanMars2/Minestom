@@ -284,109 +284,45 @@ final class PaletteImpl implements Palette {
         }
 
         final PaletteImpl sourcePalette = (PaletteImpl) source;
-        final int sourceDimension = sourcePalette.dimension();
-        final int targetDimension = this.dimension();
-        if (sourceDimension != targetDimension) {
+        final int sourceDimension = sourcePalette.dimension;
+        final int dimension = this.dimension;
+        if (sourceDimension != dimension) {
             throw new IllegalArgumentException("Source palette dimension (" + sourceDimension +
-                    ") must equal target palette dimension (" + targetDimension + ")");
+                    ") must equal target palette dimension (" + dimension + ")");
         }
 
         // Calculate the actual copy bounds - only copy what fits within target bounds
-        final int maxX = Math.min(sourceDimension, targetDimension - offsetX);
-        final int maxY = Math.min(sourceDimension, targetDimension - offsetY);
-        final int maxZ = Math.min(sourceDimension, targetDimension - offsetZ);
+        final int minX = Math.max(0, offsetX);
+        final int minY = Math.max(0, offsetY);
+        final int minZ = Math.max(0, offsetZ);
+
+        final int maxX = Math.min(dimension, dimension + offsetX);
+        final int maxY = Math.min(dimension, dimension + offsetY);
+        final int maxZ = Math.min(dimension, dimension + offsetZ);
 
         // Early exit if nothing to copy (offset pushes everything out of bounds)
-        if (maxX <= 0 || maxY <= 0 || maxZ <= 0) {
+        if (maxX <= 0 || maxY <= 0 || maxZ <= 0 || minX >= dimension || minY >= dimension || minZ >= dimension) {
             return;
         }
 
-        // Fast path: if source is single-value palette
-        if (sourcePalette.bitsPerEntry == 0) {
-            // Fill the region with the single value - optimized loop order
+        // Fast Path: partially fill if all values are equal
+        if (sourcePalette.bitsPerEntry == 0 || sourcePalette.count == 0) {
+            // Early exit if nothing to copy (all values are equal already)
+            if (sourcePalette.count == this.count && (this.bitsPerEntry == 0 || this.count == 0)) return;
+
             final int value = sourcePalette.count;
-            final int paletteValue = valueToPaletteIndex(value);
+            final boolean isAir = value == 0;
+            final int paletteIndex = valueToPaletteIndex(value);
+            final int airPaletteIndex = valueToPalettIndexOrDefault(0);
 
-            // Direct write to avoid repeated palette lookups
-            for (int y = 0; y < maxY; y++) {
-                final int targetY = offsetY + y;
-                for (int z = 0; z < maxZ; z++) {
-                    final int targetZ = offsetZ + z;
-                    for (int x = 0; x < maxX; x++) {
-                        final int targetX = offsetX + x;
-                        final int oldValue = Palettes.write(targetDimension, bitsPerEntry, values, targetX, targetY, targetZ, paletteValue);
-                        // Update count based on air transitions
-                        final boolean wasAir = paletteIndexToValue(oldValue) == 0;
-                        final boolean isAir = value == 0;
-                        if (wasAir != isAir) {
-                            this.count += wasAir ? 1 : -1;
-                        }
-                    }
-                }
-            }
+            this.count += Palettes.partialFill(this.dimension, bitsPerEntry, values,
+                    paletteIndex, isAir, airPaletteIndex,
+                    minX, minY, minZ, maxX, maxY, maxZ);
             return;
         }
 
-        // Source is empty, fill target region with air
-        if (sourcePalette.count == 0) {
-            if (this.count == 0) return;
-            final int airPaletteIndex = valueToPaletteIndex(0);
-            int removedBlocks = 0;
-            for (int y = 0; y < maxY; y++) {
-                final int targetY = offsetY + y;
-                for (int z = 0; z < maxZ; z++) {
-                    final int targetZ = offsetZ + z;
-                    for (int x = 0; x < maxX; x++) {
-                        final int targetX = offsetX + x;
-                        final int oldValue = Palettes.write(targetDimension, bitsPerEntry, values, targetX, targetY, targetZ, airPaletteIndex);
-                        if (paletteIndexToValue(oldValue) != 0) removedBlocks++;
-                    }
-                }
-            }
-            this.count -= removedBlocks;
-            return;
-        }
-
-        // General case: copy each value individually with bounds checking
-        // Use optimized access patterns to minimize cache misses
-        final long[] sourceValues = sourcePalette.values;
-        final int sourceBitsPerEntry = sourcePalette.bitsPerEntry;
-        final int sourceMask = (1 << sourceBitsPerEntry) - 1;
-        final int sourceValuesPerLong = 64 / sourceBitsPerEntry;
-        final int sourceDimensionBitCount = MathUtils.bitsToRepresent(sourceDimension - 1);
-        final int sourceShiftedDimensionBitCount = sourceDimensionBitCount << 1;
-        final int[] sourcePaletteIds = sourcePalette.hasPalette() ? sourcePalette.paletteToValueList.elements() : null;
-
-        int countDelta = 0;
-        for (int y = 0; y < maxY; y++) {
-            final int targetY = offsetY + y;
-            for (int z = 0; z < maxZ; z++) {
-                final int targetZ = offsetZ + z;
-                for (int x = 0; x < maxX; x++) {
-                    final int targetX = offsetX + x;
-
-                    final int sourceIndex = y << sourceShiftedDimensionBitCount | z << sourceDimensionBitCount | x;
-                    final int longIndex = sourceIndex / sourceValuesPerLong;
-                    final int bitIndex = (sourceIndex - longIndex * sourceValuesPerLong) * sourceBitsPerEntry;
-                    final int sourcePaletteIndex = (int) (sourceValues[longIndex] >> bitIndex) & sourceMask;
-                    final int sourceValue = sourcePaletteIds != null && sourcePaletteIndex < sourcePaletteIds.length ?
-                            sourcePaletteIds[sourcePaletteIndex] : sourcePaletteIndex;
-
-                    // Convert to target palette index and write
-                    final int targetPaletteIndex = valueToPaletteIndex(sourceValue);
-                    final int oldValue = Palettes.write(targetDimension, bitsPerEntry, values, targetX, targetY, targetZ, targetPaletteIndex);
-
-                    // Update count
-                    final boolean wasAir = paletteIndexToValue(oldValue) == 0;
-                    final boolean isAir = sourceValue == 0;
-                    if (wasAir != isAir) {
-                        countDelta += wasAir ? 1 : -1;
-                    }
-                }
-            }
-        }
-
-        this.count += countDelta;
+        // General case: copy each value individually
+        this.count += Palettes.partialOffsetCopy(sourcePalette, this, minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     @Override
