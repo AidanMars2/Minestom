@@ -65,6 +65,16 @@ public sealed interface Palette permits PaletteImpl {
 
     void fill(int value);
 
+    /**
+     * Efficiently fills a cube within the section in the range [min, max) for all dimensions.
+     * <p>
+     * All coordinates are clamped to the palette boundaries and
+     * nothing is filled if any min coordinate is greater than or equal to its max coordinate.
+     *
+     * @param value the value to fill with
+     */
+    void fill(int value, int minX, int minY, int minZ, int maxX, int maxY, int maxZ);
+
     void load(int[] palette, long[] values);
 
     void offset(int offset);
@@ -99,6 +109,33 @@ public sealed interface Palette permits PaletteImpl {
      * @param source the source palette to copy from
      */
     void copyFrom(@NotNull Palette source);
+
+    /**
+     * Efficiently copies present values from another palette with the given offset.
+     * All values are offset by the given offset.
+     * <p>
+     * Both palettes must have the same dimension.
+     *
+     * @param source  the source palette to copy from
+     * @param offsetX the X offset to apply when copying
+     * @param offsetY the Y offset to apply when copying
+     * @param offsetZ the Z offset to apply when copying
+     * @param valueOffset the offset to apply to values when copying
+     */
+    void copyPresentFrom(@NotNull Palette source, int offsetX, int offsetY, int offsetZ, int valueOffset);
+
+    /**
+     * Efficiently copies present values from another palette starting at position (0, 0, 0).
+     * All values are offset by the given offset.
+     * <p>
+     * Both palettes must have the same dimension.
+     * <p>
+     * This is a convenience method equivalent to calling {@code copyPresentFrom(source, 0, 0, 0)}.
+     *
+     * @param source the source palette to copy from
+     * @param valueOffset the offset to apply to values when copying
+     */
+    void copyPresentFrom(@NotNull Palette source, int valueOffset);
 
     /**
      * Returns the number of entries in this palette.
@@ -203,7 +240,7 @@ public sealed interface Palette permits PaletteImpl {
     }
 
     static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int directBits) {
-        //noinspection unchecked
+        //noinspection unchecked,rawtypes
         return (NetworkBuffer.Type) new NetworkBuffer.Type<PaletteImpl>() {
             @Override
             public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {

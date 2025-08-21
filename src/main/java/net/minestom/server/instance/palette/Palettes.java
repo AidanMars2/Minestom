@@ -139,89 +139,39 @@ public final class Palettes {
         return result;
     }
 
-    public static int partialFill(int dimension, int bpe, long[] values,
-                                  int fillValue, boolean isAir, int airValue,
-                                  int minX, int minY, int minZ,
-                                  int maxX, int maxY, int maxZ) {
-        final int dimensionBits = MathUtils.bitsToRepresent(dimension - 1);
-        final int initialZTravel = minZ << dimensionBits;
-        final int finalZTravel = (dimension - maxZ) << dimensionBits;
-        final int finalXTravel = dimension - minX;
-
-        final int valuesPerLong = 64 / bpe;
-        final int maxBitIndex = bpe * valuesPerLong;
-        final long mask = (1L << bpe) - 1;
-
-        int index = minY << (dimensionBits << 1);
-        int countDelta = 0;
-        for (int y = minY; y < maxY; y++) {
-            index += initialZTravel;
-            for (int z = minZ; z < maxZ; z++) {
-                index += minX;
-                int blockIndex = index / valuesPerLong;
-                int bitIndex = (index - blockIndex * valuesPerLong) * bpe;
-                long block = values[blockIndex];
-
-                for (int x = minX; x < maxX; x++) {
-                    // Update count
-                    final boolean wasAir = ((block >>> bitIndex) & mask) == airValue;
-                    if (wasAir != isAir) countDelta += wasAir ? 1 : -1;
-
-                    // Write to block
-                    block = (block & ~(mask << bitIndex)) | ((long) fillValue << bitIndex);
-                    bitIndex += bpe;
-
-                    // Write block to values
-                    if (bitIndex >= maxBitIndex) {
-                        values[blockIndex++] = block;
-                        if (blockIndex >= values.length) return countDelta;
-                        block = values[blockIndex];
-                        bitIndex = 0;
-                    }
-                }
-                values[blockIndex] = block;
-                index += finalXTravel;
-            }
-            index += finalZTravel;
-        }
-        return countDelta;
-    }
-
-    static int partialOffsetCopy(PaletteImpl sourcePalette, PaletteImpl target,
-                                 int minX, int minY, int minZ,
-                                 int maxX, int maxY, int maxZ) {
-        if (target.bitsPerEntry == 0) target.initIndirect();
+    static int partialOffsetCopy(PaletteImpl source, PaletteImpl target,
+                                 int offsetX, int offsetY, int offsetZ,
+                                 boolean ignoreEmpty, int valueOffset) {
         final int dimension = target.dimension;
-
-        final long[] sourceValues = sourcePalette.values;
-        final int sourceBpe = sourcePalette.bitsPerEntry;
+        final long[] sourceValues = source.values;
+        final int sourceBpe = source.bitsPerEntry;
         final int sourceValuesPerLong = 64 / sourceBpe;
         final int sourceMaxBitIndex = sourceValuesPerLong * sourceBpe;
         final long sourceMask = (1L << sourceBpe) - 1;
-        final int[] sourcePaletteIds = sourcePalette.hasPalette() ? sourcePalette.paletteToValueList.elements() : null;
+        final int[] sourcePaletteIds = source.hasPalette() ? source.paletteToValueList.elements() : null;
 
         final int dimensionBits = MathUtils.bitsToRepresent(dimension - 1);
-        final int initialZTravel = minZ << dimensionBits;
-        final int finalZTravel = (dimension - maxZ) << dimensionBits;
-        final int finalXTravel = dimension - maxX;
-        final int finalSourceXTravel = dimension - minX;
+        final int minXTravel = Math.max(0,  offsetX);
+        final int maxXTravel = Math.max(0, -offsetX);
+        final int minZTravel = Math.max(0,  offsetZ) << dimensionBits;
+        final int maxZTravel = Math.max(0, -offsetZ) << dimensionBits;
 
         final int airPaletteIndex = target.valueToPalettIndexOrDefault(0);
-
         int bpe = target.bitsPerEntry;
         int valuesPerLong = 64 / bpe;
         int maxBitIndex = bpe * valuesPerLong;
         long mask = (1L << bpe) - 1;
 
-        int index = minY << (dimensionBits << 1);
-        int sourceIndex = (dimension - maxY) << (dimensionBits << 1);
+        int index = Math.max(0, offsetY) << (dimensionBits << 1);
+        // bounds for source palette are reversed
+        int sourceIndex = Math.max(0, -offsetY) << (dimensionBits << 1);
         int countDelta = 0;
-        for (int y = 0; y < maxY; y++) {
-            index += initialZTravel;
-            sourceIndex += finalZTravel;
-            for (int z = 0; z < maxZ; z++) {
-                index += minX;
-                sourceIndex += finalXTravel;
+        for (int y = Math.abs(offsetY); y < dimension; y++) {
+            index += minZTravel;
+            sourceIndex += maxZTravel;
+            for (int z = Math.abs(offsetZ); z < dimension; z++) {
+                index += minXTravel;
+                sourceIndex += maxXTravel;
                 int blockIndex = index / valuesPerLong;
                 int bitIndex = (index - blockIndex * valuesPerLong) * bpe;
 
@@ -229,15 +179,20 @@ public final class Palettes {
                 int sourceBitIndex = (sourceIndex - sourceBlockIndex * sourceValuesPerLong) * sourceBpe;
                 long sourceBlock = sourceValues[sourceBlockIndex];
 
-                for (int x = 0; x < maxX; x++) {
+                for (int x = Math.abs(offsetX); x < dimension; x++) {
                     if (sourceBitIndex >= sourceMaxBitIndex) {
                         sourceBlock = sourceValues[++sourceBlockIndex];
                         sourceBitIndex = 0;
                     }
                     final int sourcePaletteIndex = (int) ((sourceBlock >>> sourceBitIndex) & sourceMask);
                     final int sourceValue = sourcePaletteIds == null ? sourcePaletteIndex : sourcePaletteIds[sourcePaletteIndex];
-                    final int newPaletteIndex = target.valueToPaletteIndex(sourceValue);
                     sourceBitIndex += sourceBpe;
+                    if (sourceValue == 0 && ignoreEmpty) {
+                        bitIndex += bpe;
+                        index++;
+                        continue;
+                    }
+                    final int newPaletteIndex = target.valueToPaletteIndex(sourceValue + valueOffset);
 
                     // Recalculate cached values if palette resized
                     if (target.bitsPerEntry != bpe) {
@@ -247,7 +202,7 @@ public final class Palettes {
                         mask = (1L << bpe) - 1;
 
                         blockIndex = index / valuesPerLong;
-                        bitIndex = (index % valuesPerLong) * bpe;
+                        bitIndex = (index - blockIndex * valuesPerLong) * bpe;
                     }
 
                     if (bitIndex >= maxBitIndex) {
@@ -266,11 +221,11 @@ public final class Palettes {
                     bitIndex += bpe;
                     index++;
                 }
-                index += finalXTravel;
-                sourceIndex += finalSourceXTravel;
+                index += maxXTravel;
+                sourceIndex += dimension - maxXTravel;
             }
-            index += finalZTravel;
-            sourceIndex += initialZTravel;
+            index += maxZTravel;
+            sourceIndex += minZTravel;
         }
         return countDelta;
     }
