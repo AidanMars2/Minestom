@@ -1,9 +1,6 @@
 package net.minestom.server.instance.palette;
 
-import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
-import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.ints.*;
 import net.minestom.server.utils.MathUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -190,46 +187,28 @@ final class PaletteImpl implements Palette {
     @Override
     public void load(int[] palette, long[] values) {
         int bpe = palette.length <= 1 ? 0 : MathUtils.bitsToRepresent(palette.length - 1);
+        if (bpe == 0) {
+            fill(palette[0]);
+            return;
+        }
         bpe = Math.max(minBitsPerEntry, bpe);
-        boolean useDirectMode = bpe > maxBitsPerEntry;
-        if (useDirectMode) bpe = directBits;
-        this.bitsPerEntry = (byte) bpe;
 
-        if (useDirectMode) {
+        if (bpe > maxBitsPerEntry) {
             // Direct mode: convert from palette indices to direct values
             this.paletteToValueList = null;
             this.valueToPaletteMap = null;
-            this.values = new long[arrayLength(dimension, directBits)];
+            this.bitsPerEntry = directBits;
 
-            final int originalBpe = palette.length <= 1 ? 0 : MathUtils.bitsToRepresent(palette.length - 1);
-            final int actualOriginalBpe = Math.max(minBitsPerEntry, originalBpe);
-            final int originalMask = (1 << actualOriginalBpe) - 1;
-            final int originalValuesPerLong = 64 / actualOriginalBpe;
-
-            int nonZeroCount = 0;
-            final int dimension = this.dimension;
-            for (int y = 0; y < dimension; y++) {
-                for (int z = 0; z < dimension; z++) {
-                    for (int x = 0; x < dimension; x++) {
-                        final int index = sectionIndex(dimension, x, y, z);
-
-                        // Read palette index from original values
-                        final int longIndex = index / originalValuesPerLong;
-                        final int bitIndex = (index % originalValuesPerLong) * actualOriginalBpe;
-                        final int paletteIndex = (int) (values[longIndex] >> bitIndex) & originalMask;
-
-                        // Convert to direct value
-                        final int directValue = paletteIndex < palette.length ? palette[paletteIndex] : 0;
-                        if (directValue != 0) nonZeroCount++;
-
-                        // Write direct value to new values array using coordinates
-                        write(dimension, directBits, this.values, x, y, z, directValue);
-                    }
-                }
-            }
-            this.count = nonZeroCount;
+            var count = new AtomicInteger();
+            this.values = Palettes.remap(dimension, bpe, directBits, values, true, v -> {
+                final int value = palette[v];
+                if (value != 0) count.setPlain(count.getPlain() + 1);
+                return value;
+            });
+            this.count = count.getPlain();
         } else {
             // Indirect mode: use palette
+            this.bitsPerEntry = (byte) bpe;
             this.paletteToValueList = new IntArrayList(palette);
             this.valueToPaletteMap = new Int2IntOpenHashMap(palette.length);
             this.valueToPaletteMap.defaultReturnValue(-1);
@@ -246,9 +225,25 @@ final class PaletteImpl implements Palette {
         if (offset == 0) return;
         if (bitsPerEntry == 0) {
             this.count += offset;
-        } else {
-            replaceAll((x, y, z, value) -> value + offset);
+            return;
         }
+        if (hasPalette()) {
+            int[] palette = paletteToValueList.elements();
+            valueToPaletteMap.clear();
+            for (int i = 0; i < paletteToValueList.size(); i++) {
+                int value = palette[i] + offset;
+                palette[i] = value;
+                valueToPaletteMap.put(value, i);
+            }
+            return;
+        }
+        var count = new AtomicInteger();
+        this.values = Palettes.remap(dimension, bitsPerEntry, directBits, values, value -> {
+            value += offset;
+            if (value != 0) count.setPlain(count.getPlain() + 1);
+            return value;
+        });
+        this.count = count.getPlain();
     }
 
     @Override
@@ -256,26 +251,36 @@ final class PaletteImpl implements Palette {
         if (oldValue == newValue) return;
         if (bitsPerEntry == 0) {
             if (oldValue == count) fill(newValue);
-        } else {
-            if (hasPalette()) {
-                final int index = valueToPaletteMap.get(oldValue);
-                if (index == -1) return; // Old value not present in palette
-                final boolean countUpdate = newValue == 0 || oldValue == 0;
+            return;
+        }
+        final int oldIndex;
+        final int newIndex;
+        final boolean countUpdate = newValue == 0 || oldValue == 0;
+        if (hasPalette()) {
+            oldIndex = valueToPalettIndexOrDefault(oldValue);
+            if (oldIndex == -1) return;
+            newIndex = valueToPalettIndexOrDefault(newValue);
+
+            if (newIndex == -1) {
                 final int count = countUpdate ? count(oldValue) : -1;
                 if (count == 0) return; // No blocks to replace
-                paletteToValueList.set(index, newValue);
+                paletteToValueList.set(oldIndex, newValue);
                 valueToPaletteMap.remove(oldValue);
-                valueToPaletteMap.put(newValue, index);
+                valueToPaletteMap.put(newValue, oldIndex);
                 // Update count
-                if (newValue == 0) {
-                    this.count -= count; // Replacing with air
-                } else if (oldValue == 0) {
-                    this.count += count; // Replacing air with a block
-                }
-            } else {
-                replaceAll((x, y, z, value) -> value == oldValue ? newValue : value);
+                if (countUpdate) this.count += oldValue == 0 ? count : -count;
+                return;
             }
+        } else {
+            newIndex = newValue;
+            oldIndex = oldValue;
         }
+        var count = new AtomicInteger();
+        this.values = Palettes.remap(dimension, bitsPerEntry, bitsPerEntry, values, value -> {
+            if (value == oldIndex) count.setPlain(count.getPlain() + 1);
+            return value == oldIndex ? newIndex : value;
+        });
+        if (countUpdate) this.count += oldValue == 0 ? count.getPlain() : -count.getPlain();
     }
 
     @Override
@@ -677,7 +682,7 @@ final class PaletteImpl implements Palette {
         if (newBpe > maxBitsPerEntry) {
             makeDirect();
         } else {
-            this.values = Palettes.remap(dimension, bpe, newBpe, values, (v) -> v);
+            this.values = Palettes.remap(dimension, bpe, newBpe, values, Int2IntFunction.identity());
             this.bitsPerEntry = newBpe;
         }
     }
