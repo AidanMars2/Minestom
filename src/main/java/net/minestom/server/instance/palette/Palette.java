@@ -28,9 +28,11 @@ public sealed interface Palette permits PaletteImpl {
     int BIOME_DIMENSION = 4;
     int BIOME_PALETTE_MIN_BITS = 1;
     int BIOME_PALETTE_MAX_BITS = 3;
+    int DEFAULT_BIOME_REGISTRY_SIZE = 128;
 
     @ApiStatus.Internal
     static int biomeRegistrySize() {
+        if (MinecraftServer.process() == null) return DEFAULT_BIOME_REGISTRY_SIZE;
         return MinecraftServer.getBiomeRegistry().size();
     }
 
@@ -211,8 +213,9 @@ public sealed interface Palette permits PaletteImpl {
     int singleValue();
 
     /**
-     * if {@link Palette#bitsPerEntry()} != 0: returns null.<p>
-     * else returns the value array
+     * If {@link Palette#bitsPerEntry()} == 0: returns null,
+     * else returns the value array.<p>
+     * Should not be modified.
      */
     @ApiStatus.Internal
     long @UnknownNullability [] indexedValues();
@@ -237,20 +240,20 @@ public sealed interface Palette permits PaletteImpl {
         boolean get(int x, int y, int z, int value);
     }
 
-    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = serializer(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE);
+    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = serializer(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE - 1);
 
-    static NetworkBuffer.Type<Palette> biomeSerializer(int biomeCount) {
-        return serializer(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeCount);
+    static NetworkBuffer.Type<Palette> biomeSerializer() {
+        return serializer(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeRegistrySize() - 1);
     }
 
-    static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int registrySize) {
-        final byte directBits = (byte) MathUtils.bitsToRepresent(registrySize - 1);
+    static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int maxValue) {
+        final byte directBits = (byte) MathUtils.bitsToRepresent(maxValue);
         //noinspection unchecked,rawtypes
         return (NetworkBuffer.Type) new NetworkBuffer.Type<PaletteImpl>() {
             @Override
             public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
                 if (directBits != value.directBits && !value.hasPalette()) {
-                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, registrySize);
+                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, maxValue);
                     tmp.setAll(value::get);
                     value = tmp;
                 }
@@ -269,7 +272,7 @@ public sealed interface Palette permits PaletteImpl {
             @Override
             public PaletteImpl read(@NotNull NetworkBuffer buffer) {
                 final byte bitsPerEntry = buffer.read(BYTE);
-                PaletteImpl result = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits);
+                PaletteImpl result = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, maxValue);
                 result.bitsPerEntry = bitsPerEntry;
                 if (bitsPerEntry == 0) {
                     // Single value palette

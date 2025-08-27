@@ -1,6 +1,7 @@
 package net.minestom.server.instance.palette;
 
 import it.unimi.dsi.fastutil.ints.*;
+import net.minestom.server.network.NetworkBuffer;
 import net.minestom.server.utils.MathUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -11,6 +12,7 @@ import java.util.function.IntUnaryOperator;
 
 import static net.minestom.server.coordinate.CoordConversion.SECTION_BLOCK_COUNT;
 import static net.minestom.server.instance.palette.Palettes.*;
+import static net.minestom.server.network.NetworkBuffer.*;
 
 final class PaletteImpl implements Palette {
     private static final ThreadLocal<int[]> WRITE_CACHE = ThreadLocal.withInitial(() -> new int[SECTION_BLOCK_COUNT]);
@@ -34,10 +36,17 @@ final class PaletteImpl implements Palette {
         this.maxBitsPerEntry = maxBitsPerEntry;
         this.directBits = (byte) MathUtils.bitsToRepresent(maxValue);
         this.maxValue = maxValue;
+        validateBitsPerEntry(minBitsPerEntry, maxBitsPerEntry, directBits);
     }
 
     PaletteImpl(byte dimension, byte minBitsPerEntry, byte maxBitsPerEntry, int maxValue, byte bitsPerEntry) {
         this(dimension, minBitsPerEntry, maxBitsPerEntry, maxValue);
+        if (bitsPerEntry != 0
+                && (bitsPerEntry < minBitsPerEntry || bitsPerEntry > maxBitsPerEntry)
+                && bitsPerEntry != this.directBits) {
+            throw new IllegalArgumentException("Bits per entry must be in range [" + minBitsPerEntry +
+                    ", " + maxBitsPerEntry + "] or equal to " + directBits + ". Got " + bitsPerEntry);
+        }
 
         this.bitsPerEntry = bitsPerEntry;
         if (bitsPerEntry != 0) {
@@ -49,11 +58,6 @@ final class PaletteImpl implements Palette {
                 this.valueToPaletteMap.defaultReturnValue(-1);
                 this.paletteToValueList.add(0);
                 this.valueToPaletteMap.put(0, 0);
-            }
-            if ((bitsPerEntry < minBitsPerEntry || bitsPerEntry > maxBitsPerEntry)
-                    && bitsPerEntry != this.directBits) {
-                throw new IllegalArgumentException("Bits per entry must be in range [" + minBitsPerEntry +
-                        ", " + maxBitsPerEntry + "] or equal to " + directBits + ". Got " + bitsPerEntry);
             }
         }
     }
@@ -557,7 +561,7 @@ final class PaletteImpl implements Palette {
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     public @NotNull Palette clone() {
-        PaletteImpl clone = new PaletteImpl(dimension, minBitsPerEntry, maxBitsPerEntry, directBits);
+        PaletteImpl clone = new PaletteImpl(dimension, minBitsPerEntry, maxBitsPerEntry, maxValue);
         clone.bitsPerEntry = this.bitsPerEntry;
         clone.count = this.count;
         if (bitsPerEntry == 0) return clone;
@@ -743,6 +747,14 @@ final class PaletteImpl implements Palette {
         return bitsPerEntry <= maxBitsPerEntry;
     }
 
+    private static void validateBitsPerEntry(byte minBitsPerEntry, byte maxBitsPerEntry, byte directBits) {
+        if (minBitsPerEntry <= 0) throw new IllegalArgumentException("Min bits per entry must be positive");
+        if (maxBitsPerEntry <= minBitsPerEntry)
+            throw new IllegalArgumentException("Max bits per entry must be greater than min bits per entry");
+        if (directBits <= maxBitsPerEntry)
+            throw new IllegalArgumentException("Direct bits per entry must be greater than max bits per entry");
+    }
+
     private static void validateCoord(int dimension, int x, int y, int z) {
         if (x < 0 || y < 0 || z < 0)
             throw new IllegalArgumentException("Coordinates must be non-negative");
@@ -753,5 +765,58 @@ final class PaletteImpl implements Palette {
     private static void validateDimension(int dimension) {
         if (dimension <= 1 || (dimension & dimension - 1) != 0)
             throw new IllegalArgumentException("Dimension must be a positive power of 2, got " + dimension);
+    }
+
+    record PaletteSerializer(
+            byte dimension,
+            byte minIndirect,
+            byte maxIndirect,
+            byte directBits,
+            int maxValue
+    ) implements NetworkBuffer.Type<PaletteImpl> {
+        @Override
+        public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
+            if (directBits != value.directBits && !value.hasPalette()) {
+                PaletteImpl tmp = new PaletteImpl(dimension, minIndirect, maxIndirect, maxValue);
+                tmp.setAll(value::get);
+                value = tmp;
+            }
+            final byte bitsPerEntry = value.bitsPerEntry;
+            buffer.write(BYTE, bitsPerEntry);
+            if (bitsPerEntry == 0) {
+                buffer.write(VAR_INT, value.count);
+            } else {
+                if (value.hasPalette()) {
+                    buffer.write(VAR_INT.list(), value.paletteToValueList);
+                }
+                for (long l : value.values) buffer.write(LONG, l);
+            }
+        }
+
+        @Override
+        public PaletteImpl read(@NotNull NetworkBuffer buffer) {
+            final byte bitsPerEntry = buffer.read(BYTE);
+            PaletteImpl result = new PaletteImpl(dimension, minIndirect, maxIndirect, maxValue);
+            result.bitsPerEntry = bitsPerEntry;
+            if (bitsPerEntry == 0) {
+                // Single value palette
+                result.count = buffer.read(VAR_INT);
+                return result;
+            }
+            if (result.hasPalette()) {
+                // Indirect palette
+                final int[] palette = buffer.read(VAR_INT_ARRAY);
+                result.paletteToValueList = new IntArrayList(palette);
+                result.valueToPaletteMap = new Int2IntOpenHashMap(palette.length);
+                for (int i = 0; i < palette.length; i++) {
+                    result.valueToPaletteMap.put(palette[i], i);
+                }
+            }
+            final long[] data = new long[Palettes.arrayLength(dimension, bitsPerEntry)];
+            for (int i = 0; i < data.length; i++) data[i] = buffer.read(LONG);
+            result.values = data;
+            result.recount();
+            return result;
+        }
     }
 }

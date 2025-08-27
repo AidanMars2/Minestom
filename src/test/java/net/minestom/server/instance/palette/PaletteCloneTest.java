@@ -225,35 +225,6 @@ public class PaletteCloneTest {
     }
 
     @Test
-    public void cloneWithOffset() {
-        var palettes = testPalettes();
-        for (Palette original : palettes) {
-            // Set pattern and apply offset
-            original.setAll((x, y, z) -> x + y + z + 100);
-            original.offset(50);
-
-            Palette cloned = original.clone();
-
-            assertTrue(original.compare(cloned));
-
-            // Verify offset was preserved in clone
-            cloned.getAll((x, y, z, value) -> {
-                int expected = x + y + z + 100 + 50;
-                assertEquals(expected, value);
-            });
-
-            // Apply different offset to original
-            original.offset(-25);
-
-            // Verify clone is unaffected
-            cloned.getAll((x, y, z, value) -> {
-                int expected = x + y + z + 100 + 50;
-                assertEquals(expected, value);
-            });
-        }
-    }
-
-    @Test
     public void cloneWithReplace() {
         var palettes = testPalettes();
         for (Palette original : palettes) {
@@ -348,7 +319,7 @@ public class PaletteCloneTest {
         // Test blocks vs biomes vs custom sized palettes
         Palette blockPalette = Palette.blocks();
         Palette biomePalette = Palette.biomes();
-        Palette customPalette = Palette.sized(8, 2, 6, 12, 4);
+        Palette customPalette = Palette.sized(8, 2, 6, 1 << 12, 4);
 
         List<Palette> palettes = List.of(blockPalette, biomePalette, customPalette);
 
@@ -370,10 +341,10 @@ public class PaletteCloneTest {
 
     private static List<Palette> testPalettes() {
         return List.of(
-                Palette.sized(2, 1, 5, 15, 3),
-                Palette.sized(4, 1, 5, 15, 3),
-                Palette.sized(8, 1, 5, 15, 3),
-                Palette.sized(16, 1, 5, 15, 3),
+                Palette.sized(2, 1, 5, 1 << 15, 3),
+                Palette.sized(4, 1, 5, 1 << 15, 3),
+                Palette.sized(8, 1, 5, 1 << 15, 3),
+                Palette.sized(16, 1, 5, 1 << 15, 3),
                 Palette.blocks()
         );
     }

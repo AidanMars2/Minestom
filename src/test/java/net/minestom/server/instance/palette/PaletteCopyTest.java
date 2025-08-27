@@ -110,9 +110,9 @@ public class PaletteCopyTest {
         void copyBetweenBlockPalettes() {
             List<Palette> palettes = List.of(
                     Palette.blocks(),
-                    Palette.sized(16, 4, 8, 15, 4),
-                    Palette.sized(16, 4, 8, 15, 6),
-                    Palette.sized(16, 4, 8, 15, 8)
+                    Palette.sized(16, 4, 8, 1 << 15, 4),
+                    Palette.sized(16, 4, 8, 1 << 15, 6),
+                    Palette.sized(16, 4, 8, 1 << 15, 8)
             );
 
             for (Palette source : palettes) {
@@ -291,7 +291,7 @@ public class PaletteCopyTest {
         @DisplayName("Copy handles palette resize scenarios")
         void copyHandlesPaletteResizeScenarios() {
             // Test copying from a palette that has undergone resizing
-            Palette source = Palette.sized(16, 1, 5, 15, 2);
+            Palette source = Palette.sized(16, 1, 5, 1 << 15, 2);
             Palette target = Palette.blocks();
 
             // Fill with values that will cause resize in source
