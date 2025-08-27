@@ -1,7 +1,5 @@
 package net.minestom.server.instance.palette;
 
-import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.network.NetworkBuffer;
@@ -11,8 +9,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.UnknownNullability;
 
 import java.util.function.IntUnaryOperator;
-
-import static net.minestom.server.network.NetworkBuffer.*;
 
 /**
  * Represents a palette used to store blocks and biomes.
@@ -240,60 +236,23 @@ public sealed interface Palette permits PaletteImpl {
         boolean get(int x, int y, int z, int value);
     }
 
-    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = serializer(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE - 1);
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = (NetworkBuffer.Type) new PaletteImpl.PaletteSerializer(
+            (byte) BLOCK_DIMENSION, (byte) BLOCK_PALETTE_MIN_BITS, (byte) BLOCK_PALETTE_MAX_BITS,
+            (byte) MathUtils.bitsToRepresent(BLOCK_PALETTE_REGISTRY_SIZE - 1), BLOCK_PALETTE_REGISTRY_SIZE - 1);
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
     static NetworkBuffer.Type<Palette> biomeSerializer() {
-        return serializer(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeRegistrySize() - 1);
-    }
+        // Use cached
+        final var cached = PaletteImpl.PaletteSerializer.CACHED_BIOME_SERIALIZER;
+        final int maxValue = biomeRegistrySize() - 1;
+        final int directBits = MathUtils.bitsToRepresent(maxValue);
+        if (cached != null && cached.directBits() == directBits) return (NetworkBuffer.Type) cached;
 
-    static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int maxValue) {
-        final byte directBits = (byte) MathUtils.bitsToRepresent(maxValue);
-        //noinspection unchecked,rawtypes
-        return (NetworkBuffer.Type) new NetworkBuffer.Type<PaletteImpl>() {
-            @Override
-            public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
-                if (directBits != value.directBits && !value.hasPalette()) {
-                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, maxValue);
-                    tmp.setAll(value::get);
-                    value = tmp;
-                }
-                final byte bitsPerEntry = value.bitsPerEntry;
-                buffer.write(BYTE, bitsPerEntry);
-                if (bitsPerEntry == 0) {
-                    buffer.write(VAR_INT, value.count);
-                } else {
-                    if (value.hasPalette()) {
-                        buffer.write(VAR_INT.list(), value.paletteToValueList);
-                    }
-                    for (long l : value.values) buffer.write(LONG, l);
-                }
-            }
-
-            @Override
-            public PaletteImpl read(@NotNull NetworkBuffer buffer) {
-                final byte bitsPerEntry = buffer.read(BYTE);
-                PaletteImpl result = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, maxValue);
-                result.bitsPerEntry = bitsPerEntry;
-                if (bitsPerEntry == 0) {
-                    // Single value palette
-                    result.count = buffer.read(VAR_INT);
-                    return result;
-                }
-                if (result.hasPalette()) {
-                    // Indirect palette
-                    final int[] palette = buffer.read(VAR_INT_ARRAY);
-                    result.paletteToValueList = new IntArrayList(palette);
-                    result.valueToPaletteMap = new Int2IntOpenHashMap(palette.length);
-                    for (int i = 0; i < palette.length; i++) {
-                        result.valueToPaletteMap.put(palette[i], i);
-                    }
-                }
-                final long[] data = new long[Palettes.arrayLength(dimension, bitsPerEntry)];
-                for (int i = 0; i < data.length; i++) data[i] = buffer.read(LONG);
-                result.values = data;
-                result.recount();
-                return result;
-            }
-        };
+        final var newCached = new PaletteImpl.PaletteSerializer(
+                (byte) BIOME_DIMENSION, (byte) BIOME_PALETTE_MIN_BITS,
+                (byte) BIOME_PALETTE_MAX_BITS, (byte) directBits, maxValue);
+        PaletteImpl.PaletteSerializer.CACHED_BIOME_SERIALIZER = newCached;
+        return (NetworkBuffer.Type) newCached;
     }
 }

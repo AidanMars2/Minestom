@@ -3,8 +3,9 @@ package net.minestom.server.instance.palette;
 import it.unimi.dsi.fastutil.ints.*;
 import net.minestom.server.network.NetworkBuffer;
 import net.minestom.server.utils.MathUtils;
+import net.minestom.server.utils.validate.Check;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.UnknownNullability;
 
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -738,7 +739,7 @@ final class PaletteImpl implements Palette {
     }
 
     @Override
-    public long @Nullable [] indexedValues() {
+    public long @UnknownNullability [] indexedValues() {
         return values;
     }
 
@@ -774,13 +775,12 @@ final class PaletteImpl implements Palette {
             byte directBits,
             int maxValue
     ) implements NetworkBuffer.Type<PaletteImpl> {
+        static PaletteSerializer CACHED_BIOME_SERIALIZER = null;
+
         @Override
         public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
-            if (directBits != value.directBits && !value.hasPalette()) {
-                PaletteImpl tmp = new PaletteImpl(dimension, minIndirect, maxIndirect, maxValue);
-                tmp.setAll(value::get);
-                value = tmp;
-            }
+            Check.argCondition(value.directBits > this.directBits, "Oversized palette");
+            value.validateValue(maxValue, true);
             final byte bitsPerEntry = value.bitsPerEntry;
             buffer.write(BYTE, bitsPerEntry);
             if (bitsPerEntry == 0) {
