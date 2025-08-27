@@ -2,11 +2,13 @@ package net.minestom.server.instance.palette;
 
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import net.minestom.server.MinecraftServer;
+import net.minestom.server.instance.block.Block;
 import net.minestom.server.network.NetworkBuffer;
 import net.minestom.server.utils.MathUtils;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.UnknownNullability;
 
 import java.util.function.IntUnaryOperator;
 
@@ -21,36 +23,39 @@ public sealed interface Palette permits PaletteImpl {
     int BLOCK_DIMENSION = 16;
     int BLOCK_PALETTE_MIN_BITS = 4;
     int BLOCK_PALETTE_MAX_BITS = 8;
-    int BLOCK_PALETTE_DIRECT_BITS = 15;
+    int BLOCK_PALETTE_REGISTRY_SIZE = Block.statesCount();
 
     int BIOME_DIMENSION = 4;
     int BIOME_PALETTE_MIN_BITS = 1;
     int BIOME_PALETTE_MAX_BITS = 3;
+
     @ApiStatus.Internal
-    int BIOME_PALETTE_DIRECT_BITS = 6; // Vary based on biome count, this is just a sensible default
+    static int biomeRegistrySize() {
+        return MinecraftServer.getBiomeRegistry().size();
+    }
 
     static Palette blocks(int bitsPerEntry) {
-        return sized(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_DIRECT_BITS, bitsPerEntry);
+        return sized(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE, bitsPerEntry);
     }
 
     static Palette biomes(int bitsPerEntry) {
-        return sized(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, BIOME_PALETTE_DIRECT_BITS, bitsPerEntry);
+        return sized(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeRegistrySize(), bitsPerEntry);
     }
 
     static Palette blocks() {
-        return empty(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_DIRECT_BITS);
+        return empty(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE);
     }
 
     static Palette biomes() {
-        return empty(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, BIOME_PALETTE_DIRECT_BITS);
+        return empty(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeRegistrySize());
     }
 
-    static Palette empty(int dimension, int minBitsPerEntry, int maxBitsPerEntry, int directBits) {
-        return new PaletteImpl((byte) dimension, (byte) minBitsPerEntry, (byte) maxBitsPerEntry, (byte) directBits);
+    static Palette empty(int dimension, int minBitsPerEntry, int maxBitsPerEntry, int registrySize) {
+        return new PaletteImpl((byte) dimension, (byte) minBitsPerEntry, (byte) maxBitsPerEntry, registrySize - 1);
     }
 
-    static Palette sized(int dimension, int minBitsPerEntry, int maxBitsPerEntry, int directBits, int bitsPerEntry) {
-        return new PaletteImpl((byte) dimension, (byte) minBitsPerEntry, (byte) maxBitsPerEntry, (byte) directBits, (byte) bitsPerEntry);
+    static Palette sized(int dimension, int minBitsPerEntry, int maxBitsPerEntry, int registrySize, int bitsPerEntry) {
+        return new PaletteImpl((byte) dimension, (byte) minBitsPerEntry, (byte) maxBitsPerEntry, registrySize - 1, (byte) bitsPerEntry);
     }
 
     int get(int x, int y, int z);
@@ -76,8 +81,6 @@ public sealed interface Palette permits PaletteImpl {
     void fill(int value, int minX, int minY, int minZ, int maxX, int maxY, int maxZ);
 
     void load(int[] palette, long[] values);
-
-    void offset(int offset);
 
     void replace(int oldValue, int newValue);
 
@@ -201,16 +204,18 @@ public sealed interface Palette permits PaletteImpl {
     int valueToPaletteIndex(int value);
 
     /**
-     * Gets the single value of this palette if it is a single value palette, otherwise returns -1.
+     * Gets fill value of this palette, if it is guaranteed to be filled with that value. Otherwise, returns -1.
+     * If this returns -1, {@link Palette#bitsPerEntry()} != 0.
      */
     @ApiStatus.Internal
     int singleValue();
 
     /**
-     * Gets the value array if it has one, otherwise returns null (i.e. single value palette).
+     * if {@link Palette#bitsPerEntry()} != 0: returns null.<p>
+     * else returns the value array
      */
     @ApiStatus.Internal
-    long @Nullable [] indexedValues();
+    long @UnknownNullability [] indexedValues();
 
     @FunctionalInterface
     interface EntrySupplier {
@@ -232,21 +237,20 @@ public sealed interface Palette permits PaletteImpl {
         boolean get(int x, int y, int z, int value);
     }
 
-    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = serializer(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_DIRECT_BITS);
+    NetworkBuffer.Type<Palette> BLOCK_SERIALIZER = serializer(BLOCK_DIMENSION, BLOCK_PALETTE_MIN_BITS, BLOCK_PALETTE_MAX_BITS, BLOCK_PALETTE_REGISTRY_SIZE);
 
     static NetworkBuffer.Type<Palette> biomeSerializer(int biomeCount) {
-        final int directBits = MathUtils.bitsToRepresent(biomeCount);
-        return serializer(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, directBits);
+        return serializer(BIOME_DIMENSION, BIOME_PALETTE_MIN_BITS, BIOME_PALETTE_MAX_BITS, biomeCount);
     }
 
-    static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int directBits) {
+    static NetworkBuffer.Type<Palette> serializer(int dimension, int minIndirect, int maxIndirect, int registrySize) {
+        final byte directBits = (byte) MathUtils.bitsToRepresent(registrySize - 1);
         //noinspection unchecked,rawtypes
         return (NetworkBuffer.Type) new NetworkBuffer.Type<PaletteImpl>() {
             @Override
             public void write(@NotNull NetworkBuffer buffer, PaletteImpl value) {
-                // Temporary fix for biome direct bits depending on the number of registered biomes
                 if (directBits != value.directBits && !value.hasPalette()) {
-                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, (byte) directBits);
+                    PaletteImpl tmp = new PaletteImpl((byte) dimension, (byte) minIndirect, (byte) maxIndirect, registrySize);
                     tmp.setAll(value::get);
                     value = tmp;
                 }

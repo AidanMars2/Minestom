@@ -125,94 +125,6 @@ public class PaletteTest {
     }
 
     @Test
-    public void offset() {
-        for (Palette palette : testPalettes()) {
-            palette.fill(0);
-            palette.offset(1);
-            for (int x = 0; x < palette.dimension(); x++) {
-                for (int y = 0; y < palette.dimension(); y++) {
-                    for (int z = 0; z < palette.dimension(); z++) {
-                        assertEquals(1, palette.get(x, y, z));
-                    }
-                }
-            }
-
-            palette.fill(1);
-            palette.set(0, 0, 1, 2);
-            palette.offset(-1);
-            for (int x = 0; x < palette.dimension(); x++) {
-                for (int y = 0; y < palette.dimension(); y++) {
-                    for (int z = 0; z < palette.dimension(); z++) {
-                        if (x == 0 && y == 0 && z == 1) {
-                            assertEquals(1, palette.get(x, y, z));
-                        } else {
-                            assertEquals(0, palette.get(x, y, z));
-                        }
-                    }
-                }
-            }
-        }
-        for (Palette palette : testPalettes()) {
-            palette.setAll((x, y, z) -> x + y + z + 100);
-            palette.offset(50);
-            palette.getAll((x, y, z, value) -> {
-                int expected = x + y + z + 100 + 50;
-                assertEquals(expected, value);
-            });
-        }
-
-        for (Palette palette : testPalettes()) {
-            palette.set(0, 0, 1, 1);
-            palette.set(0, 1, 0, 2);
-            palette.set(1, 0, 0, 3);
-            palette.offset(50);
-            palette.getAll((x, y, z, value) -> {
-                if (x == 0 && y == 0 && z == 1) {
-                    assertEquals(51, value);
-                } else if (x == 0 && y == 1 && z == 0) {
-                    assertEquals(52, value);
-                } else if (x == 1 && y == 0 && z == 0) {
-                    assertEquals(53, value);
-                } else {
-                    assertEquals(50, value);
-                }
-            });
-        }
-    }
-
-    @Test
-    public void offsetCount() {
-        for (Palette palette : testPalettes()) {
-            assertEquals(0, palette.count());
-            palette.fill(0);
-            assertEquals(0, palette.count());
-            palette.offset(1);
-            assertEquals(palette.maxSize(), palette.count());
-            palette.offset(-1);
-            assertEquals(0, palette.count());
-        }
-        for (Palette palette : testPalettes()) {
-            palette.fill(1);
-            assertEquals(palette.maxSize(), palette.count());
-            palette.set(0, 0, 1, 2);
-            palette.set(0, 1, 0, 3);
-            palette.set(1, 0, 0, 4);
-            palette.offset(-1);
-            assertEquals(3, palette.count());
-            palette.offset(1);
-            assertEquals(palette.maxSize(), palette.count());
-        }
-        for (Palette palette : testPalettes()) {
-            palette.setAll((x, y, z) -> x + y + z + 100);
-            assertEquals(palette.maxSize(), palette.count());
-            palette.offset(50);
-            assertEquals(palette.maxSize(), palette.count());
-            palette.offset(-50);
-            assertEquals(palette.maxSize(), palette.count());
-        }
-    }
-
-    @Test
     public void replace() {
         for (Palette palette : testPalettes()) {
             palette.fill(0);
@@ -314,6 +226,12 @@ public class PaletteTest {
             palette.setAll((x, y, z) -> x + y + z + 100);
             assertEquals(0, palette.count(0));
             assertEquals(1, palette.count(100));
+        }
+        for (Palette palette : testPalettes()) {
+            palette.set(0, 0, 0, 1);
+            palette.set(0, 0, 1, 2);
+            palette.replace(1, 2);
+            assertEquals(2, palette.count(2));
         }
     }
 
@@ -706,9 +624,7 @@ public class PaletteTest {
         for (int i = 0; i < 64; i++) {
             int longIndex = i / 21; // 21 values per long with 3 bits each (63 bits used)
             int bitIndex = (i % 21) * 3;
-            if (longIndex < values.length) {
-                values[longIndex] |= ((long) (i % 5)) << bitIndex;
-            }
+            values[longIndex] |= ((long) (i % 5)) << bitIndex;
         }
 
         palette.load(paletteData, values);
@@ -768,25 +684,6 @@ public class PaletteTest {
     }
 
     @Test
-    public void loadEmptyPalette() {
-        // Test loading with empty palette
-        Palette palette = Palette.sized(4, 1, 8, 15, 1);
-
-        int[] paletteData = {0}; // Single value palette
-        long[] values = new long[4]; // All zeros
-
-        palette.load(paletteData, values);
-
-        // Should use minBitsPerEntry since 1 value needs 0 bits but min is 1
-        assertEquals(1, palette.bitsPerEntry());
-
-        // Should have palette with single entry
-        assertNotNull(((PaletteImpl) palette).paletteToValueList);
-        assertEquals(1, ((PaletteImpl) palette).paletteToValueList.size());
-        assertEquals(0, ((PaletteImpl) palette).paletteToValueList.getInt(0));
-    }
-
-    @Test
     public void loadValuesCloned() {
         // Test that values array is properly cloned
         Palette palette = Palette.sized(4, 2, 6, 15, 2);
@@ -841,7 +738,7 @@ public class PaletteTest {
         palette.load(paletteData, values);
 
         // Should become direct palette since uniqueValueCount >> 2^maxBitsPerEntry
-        assertEquals(Palette.BLOCK_PALETTE_DIRECT_BITS, palette.bitsPerEntry(),
+        assertEquals(Palette.BLOCK_PALETTE_REGISTRY_SIZE, palette.bitsPerEntry(),
                 "Palette should use direct bits when loaded with thousands of indices");
 
         // Should not have indirect palette structures (direct mode)

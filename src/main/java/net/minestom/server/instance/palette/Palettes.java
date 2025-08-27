@@ -2,9 +2,11 @@ package net.minestom.server.instance.palette;
 
 import it.unimi.dsi.fastutil.ints.Int2IntFunction;
 import net.minestom.server.utils.MathUtils;
+import org.jetbrains.annotations.ApiStatus;
 
 import java.util.Arrays;
 
+@ApiStatus.Internal
 public final class Palettes {
     private Palettes() {
     }
@@ -80,17 +82,6 @@ public final class Palettes {
         Arrays.fill(values, block);
     }
 
-    public static int count(int bitsPerEntry, long[] values) {
-        final int valuesPerLong = 64 / bitsPerEntry;
-        int count = 0;
-        for (long block : values) {
-            for (int i = 0; i < valuesPerLong; i++) {
-                count += (int) ((block >>> i * bitsPerEntry) & ((1 << bitsPerEntry) - 1));
-            }
-        }
-        return count;
-    }
-
     public static int sectionIndex(int dimension, int x, int y, int z) {
         final int dimensionBitCount = MathUtils.bitsToRepresent(dimension - 1);
         return y << (dimensionBitCount << 1) | z << dimensionBitCount | x;
@@ -157,7 +148,7 @@ public final class Palettes {
         final long sourceMask = (1L << sourceBpe) - 1;
         final int[] sourcePaletteIds = source.hasPalette() ? source.paletteToValueList.elements() : null;
 
-        final int dimensionBits = MathUtils.bitsToRepresent(dimension - 1);
+        final int dimensionBits = Integer.numberOfTrailingZeros(dimension);
         final int minXTravel = Math.max(0,  offsetX);
         final int maxXTravel = Math.max(0, -offsetX);
         final int minZTravel = Math.max(0,  offsetZ) << dimensionBits;
