@@ -205,6 +205,8 @@ final class PaletteImpl implements Palette {
             return;
         }
         bpe = Math.max(minBitsPerEntry, bpe);
+        validateValues((byte) bpe, palette.length, values, maxSize());
+
         int maxPaletteValue = 0;
         for (int value : palette) maxPaletteValue = Math.max(maxPaletteValue, value);
         validateValue(maxPaletteValue, false);
@@ -447,33 +449,16 @@ final class PaletteImpl implements Palette {
     public int count(int value) {
         if (bitsPerEntry == 0) return count == value ? maxSize() : 0;
         if (value == 0) return maxSize() - count();
-        final int queryValue = valueToPalettIndexOrDefault(value);
-        return countPaletteIndex(queryValue);
+        final int paletteIndex = valueToPalettIndexOrDefault(value);
+        return Palettes.count(bitsPerEntry, values, paletteIndex, maxSize());
     }
 
     void recount() {
         if (bitsPerEntry != 0) {
-            this.count = maxSize() - countPaletteIndex(valueToPalettIndexOrDefault(0));
+            final int paletteIndex = valueToPalettIndexOrDefault(0);
+            final int airCount = Palettes.count(bitsPerEntry, values, paletteIndex, maxSize());
+            this.count = maxSize() - airCount;
         }
-    }
-
-    /// Assumes {@link PaletteImpl#bitsPerEntry} != 0
-    int countPaletteIndex(int paletteIndex) {
-        if (paletteIndex < 0 || paletteIndex > maxValue) return 0;
-        int result = 0;
-        final int size = maxSize();
-        final int bits = bitsPerEntry;
-        final int valuesPerLong = 64 / bits;
-        final int mask = (1 << bits) - 1;
-        for (int i = 0, idx = 0; i < values.length; i++) {
-            long block = values[i];
-            int end = Math.min(valuesPerLong, size - idx);
-            for (int j = 0; j < end; j++, idx++) {
-                if (((int) (block & mask)) == paletteIndex) result++;
-                block >>>= bits;
-            }
-        }
-        return result;
     }
 
     @Override

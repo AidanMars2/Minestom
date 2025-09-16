@@ -227,4 +227,69 @@ public final class Palettes {
         }
         return countDelta;
     }
+
+    public static int count(byte bitsPerEntry, long[] values, int compareValue, int totalEntries) {
+        if (compareValue < 0 || compareValue >= (1 << bitsPerEntry)) return 0;
+        final int valuesPerLong = 64 / bitsPerEntry;
+        final int fullLongs = totalEntries / valuesPerLong;
+        final int remaining = totalEntries - (fullLongs * valuesPerLong);
+
+        long swarSplat = 1L;
+        for (int i = bitsPerEntry; i < 64; i <<= 1) swarSplat |= swarSplat << i;
+        final long signMask = (1L << (bitsPerEntry - 1)) * swarSplat;
+        final long repCompare = ((long) compareValue) * swarSplat;
+        final long lowMask = ~signMask;
+
+        int count = 0;
+        if (remaining != 0) {
+            final long lastSignMask = signMask >>> ((valuesPerLong - remaining) * bitsPerEntry);
+            final long v = values[fullLongs];
+            final long xored = v ^ repCompare;
+            final long tmp = (xored & lowMask) + lowMask;
+            final long eq = ~(tmp | xored | lowMask);
+            count += Long.bitCount(eq & lastSignMask);
+        }
+
+        for (int i = 0; i < fullLongs; i++) {
+            final long v = values[i];
+            final long xored = v ^ repCompare;
+            final long tmp = (xored & lowMask) + lowMask;
+            final long eq = ~(tmp | xored | lowMask);
+            count += Long.bitCount(eq);
+        }
+
+        return count;
+    }
+
+    public static void validateValues(byte bpe, int paletteSize, long[] values, int totalEntries) {
+        if (paletteSize >= (1L << bpe)) return;
+
+        long swarSplat = 1L;
+        for (int i = bpe; i < 64; i *= 2) swarSplat |= swarSplat << i;
+        final long signMask = (1L << (bpe - 1)) * swarSplat;
+        final long compare = ((long) paletteSize) * swarSplat;
+        final long lowMask = ~signMask;
+
+        final int valuesPerLong = 64 / bpe;
+        final int fullLongs = Math.min(values.length, totalEntries / valuesPerLong);
+        final int remaining = totalEntries - (fullLongs * valuesPerLong);
+
+        // No early return, assume values are valid
+        boolean valid = true;
+        if (remaining != 0 && fullLongs < values.length) {
+            final long lastSignMask = signMask >>> ((valuesPerLong - remaining) * bpe);
+            final long v = ~values[fullLongs];
+            final long t = (v & compare) + (((v ^ compare) >>> 1) & lowMask);
+
+            valid &= (t & lastSignMask) == lastSignMask;
+        }
+
+        for (int i = 0; i < fullLongs; i++) {
+            final long v = ~values[i];
+            final long t = (v & compare) + (((v ^ compare) >>> 1) & lowMask);
+
+            valid &= (t & signMask) == signMask;
+        }
+        if (!valid) throw new IllegalArgumentException("Palette index out of bounds");
+    }
 }
