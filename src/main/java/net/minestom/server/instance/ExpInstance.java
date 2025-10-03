@@ -108,9 +108,9 @@ public interface ExpInstance extends Block.Getter, Block.Setter, Tickable, Sched
 
     void explode(float centerX, float centerY, float centerZ, float strength, @Nullable CompoundBinaryTag additionalData);
 
-    void setExplosionSupplier(@Nullable ExplosionSupplier supplier);
+    void enableAutoChunkLoad(boolean enable);
 
-    @Nullable ExplosionSupplier getExplosionSupplier();
+    boolean hasEnabledAutoChunkLoad();
 
     interface Entities extends PacketGroupingAudience, Snapshotable {
         @NotNull EntityTracker getEntityTracker();
@@ -129,12 +129,6 @@ public interface ExpInstance extends Block.Getter, Block.Setter, Tickable, Sched
 
         @UnmodifiableView
         Set<BossBar> bossBars();
-
-        void playSoundExcept(@Nullable Player excludedPlayer, @NotNull Sound sound, @NotNull Point point);
-
-        void playSoundExcept(@Nullable Player excludedPlayer, @NotNull Sound sound, double x, double y, double z);
-
-        void playSoundExcept(@Nullable Player excludedPlayer, @NotNull Sound sound, Sound.@NotNull Emitter emitter);
     }
 
     interface Chunks extends Block.Getter, Block.Setter, Biome.Getter, Biome.Setter, Snapshotable {
@@ -157,11 +151,11 @@ public interface ExpInstance extends Block.Getter, Block.Setter, Tickable, Sched
 
         boolean isInVoid(@NotNull Point point);
 
+        void setExplosionSupplier(@Nullable ExplosionSupplier supplier);
+
+        @Nullable ExplosionSupplier getExplosionSupplier();
+
         // Chunk functions
-        void enableAutoChunkLoad(boolean enable);
-
-        boolean hasEnabledAutoChunkLoad();
-
         @NotNull CompletableFuture<@NotNull ExpChunk> loadChunk(int chunkX, int chunkZ);
 
         @NotNull CompletableFuture<@Nullable ExpChunk> loadOptionalChunk(int chunkX, int chunkZ);

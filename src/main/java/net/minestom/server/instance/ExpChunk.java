@@ -70,7 +70,7 @@ public interface ExpChunk extends Block.Getter, Block.Setter, Biome.Getter, Biom
     void invalidate();
 
     // Owned only
-    boolean ownsBlocks();
+    boolean ();
 
     void invalidateSection(int section);
 
