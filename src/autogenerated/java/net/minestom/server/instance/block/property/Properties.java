@@ -3,20 +3,20 @@ package net.minestom.server.instance.block.property;
 import java.lang.Boolean;
 import java.lang.Integer;
 import java.lang.SuppressWarnings;
+import net.minestom.server.instance.block.property.enums.AttachFace;
 import net.minestom.server.instance.block.property.enums.Axis;
 import net.minestom.server.instance.block.property.enums.BambooLeaves;
 import net.minestom.server.instance.block.property.enums.BedPart;
 import net.minestom.server.instance.block.property.enums.BellAttachment;
 import net.minestom.server.instance.block.property.enums.BigDripleafTilt;
-import net.minestom.server.instance.block.property.enums.ButtonFace;
 import net.minestom.server.instance.block.property.enums.ChestType;
 import net.minestom.server.instance.block.property.enums.ComparatorMode;
 import net.minestom.server.instance.block.property.enums.CopperGolemPose;
 import net.minestom.server.instance.block.property.enums.CreakingHeartState;
 import net.minestom.server.instance.block.property.enums.DoorHinge;
+import net.minestom.server.instance.block.property.enums.DoubleBlockHalf;
 import net.minestom.server.instance.block.property.enums.Facing;
-import net.minestom.server.instance.block.property.enums.GrindstoneFace;
-import net.minestom.server.instance.block.property.enums.LeverFace;
+import net.minestom.server.instance.block.property.enums.Half;
 import net.minestom.server.instance.block.property.enums.NoteBlockInstrument;
 import net.minestom.server.instance.block.property.enums.Orientation;
 import net.minestom.server.instance.block.property.enums.PaleMossCarpetSide;
@@ -31,9 +31,7 @@ import net.minestom.server.instance.block.property.enums.SlabType;
 import net.minestom.server.instance.block.property.enums.StairsShape;
 import net.minestom.server.instance.block.property.enums.StructureBlockMode;
 import net.minestom.server.instance.block.property.enums.TestBlockMode;
-import net.minestom.server.instance.block.property.enums.TopBottomHalf;
 import net.minestom.server.instance.block.property.enums.TrialSpawnerState;
-import net.minestom.server.instance.block.property.enums.UpperLowerHalf;
 import net.minestom.server.instance.block.property.enums.VaultState;
 import net.minestom.server.instance.block.property.enums.WallSide;
 
@@ -184,11 +182,19 @@ sealed interface Properties permits Property {
 
     Property<Axis> AXIS = new EnumProperty<>("axis", Axis::typedValueOf);
 
+    Property<Axis> NETHER_PORTAL_AXIS = new EnumProperty<>("axis", Axis::typedValueOf);
+
     Property<Facing> FACING = new EnumProperty<>("facing", Facing::typedValueOf);
+
+    Property<Facing> HORIZONTAL_FACING = new EnumProperty<>("facing", Facing::typedValueOf);
+
+    Property<Facing> HOPPER_FACING = new EnumProperty<>("facing", Facing::typedValueOf);
 
     Property<NoteBlockInstrument> NOTE_BLOCK_INSTRUMENT = new EnumProperty<>("instrument", NoteBlockInstrument::typedValueOf);
 
     Property<BedPart> BED_PART = new EnumProperty<>("part", BedPart::typedValueOf);
+
+    Property<DoubleBlockHalf> DOUBLE_BLOCK_HALF = new EnumProperty<>("half", DoubleBlockHalf::typedValueOf);
 
     Property<PistonType> PISTON_TYPE = new EnumProperty<>("type", PistonType::typedValueOf);
 
@@ -196,9 +202,7 @@ sealed interface Properties permits Property {
 
     Property<CreakingHeartState> CREAKING_HEART_STATE = new EnumProperty<>("creaking_heart_state", CreakingHeartState::typedValueOf);
 
-    Property<TopBottomHalf> TOP_BOTTOM_HALF = new EnumProperty<>("half", TopBottomHalf::typedValueOf);
-
-    Property<UpperLowerHalf> UPPER_LOWER_HALF = new EnumProperty<>("half", UpperLowerHalf::typedValueOf);
+    Property<Half> HALF = new EnumProperty<>("half", Half::typedValueOf);
 
     Property<StairsShape> STAIRS_SHAPE = new EnumProperty<>("shape", StairsShape::typedValueOf);
 
@@ -216,11 +220,9 @@ sealed interface Properties permits Property {
 
     Property<RailShape> RAIL_SHAPE = new EnumProperty<>("shape", RailShape::typedValueOf);
 
-    Property<ButtonFace> BUTTON_FACE = new EnumProperty<>("face", ButtonFace::typedValueOf);
+    Property<RailShape> STRAIGHT_RAIL_SHAPE = new EnumProperty<>("shape", RailShape::typedValueOf);
 
-    Property<LeverFace> LEVER_FACE = new EnumProperty<>("face", LeverFace::typedValueOf);
-
-    Property<GrindstoneFace> GRINDSTONE_FACE = new EnumProperty<>("face", GrindstoneFace::typedValueOf);
+    Property<AttachFace> ATTACH_FACE = new EnumProperty<>("face", AttachFace::typedValueOf);
 
     Property<SlabType> SLAB_TYPE = new EnumProperty<>("type", SlabType::typedValueOf);
 

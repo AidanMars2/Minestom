@@ -22,6 +22,17 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
             Set.of("north", "east", "south", "west"), "side"
     );
 
+    private static final Map<List<String>, Map<String, String>> NAME_MODIFIERS = Map.ofEntries(
+            Map.entry(List.of("north", "south", "west", "east"), Map.of("facing", "horizontal")),
+            Map.entry(List.of("upper", "lower"), Map.of("half", "double_block")),
+//            Map.entry(List.of("top", "bottom"), Map.of("half", "block")),
+            Map.entry(
+                List.of("north_south", "east_west", "ascending_east", "ascending_west", "ascending_north", "ascending_south"),
+                Map.of("shape", "straight")
+            ),
+            Map.entry(List.of("floor", "wall", "ceiling"), Map.of("face", "attach"))
+    );
+
     @Override
     public void generate() {
         ensureDirectory(outputFolder);
@@ -68,7 +79,8 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
         properties.properties.entrySet().removeIf(entry -> {
             if (entry.getValue().type() != 1) return false; // not integer property
             entry.getValue().properties.forEach((name, property) ->
-                    integerProperties.computeIfAbsent(name, Property::new).registerBlocks(property.blocks));
+                    integerProperties.computeIfAbsent(name, _ -> new Property(name, List.of()))
+                            .registerBlocks(property.blocks));
             return true;
         });
         integerProperties.forEach((name, property) -> {
@@ -96,34 +108,54 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
             TypeSpec.Builder builder,
             ClassName implCN
     ) {
-        final NameAllocator<PropertyValues> propertyEnums = new NameAllocator<>();
-        final NameAllocator<NamedProperty> propertyFields = new NameAllocator<>();
+        final Map<Identifier, PropertyValues> propertyEnums = new HashMap<>();
+        final Map<Identifier, NamedProperty> propertyFields = new LinkedHashMap<>();
         properties.properties.values().stream().flatMap(
                 propertyValues -> propertyValues.split == null ?
                         Stream.of(propertyValues) : Stream.concat(Stream.of(propertyValues), propertyValues.split.stream())
         ).forEach(propertyValues -> {
-            propertyValues.properties.values().forEach(property -> {
+            Stream.concat(
+                    propertyValues.properties.values().stream(),
+                    propertyValues.subsets.values().stream()
+                            .flatMap(subset -> subset.properties.values().stream())
+            ).forEach(property -> {
                 final Identifier propertyIdentifier = property.getIdentifier();
-                final NamedProperty namedProperty = new NamedProperty(propertyValues, property, false);
                 if (usedIdentifiers.contains(propertyIdentifier)) {
-                    propertyFields.allocateName(
-                            propertyIdentifier.withPrefix(namedProperty.prefix()),
-                            namedProperty.prefixedValue());
-                } else {
-                    propertyFields.allocateName(propertyIdentifier, namedProperty);
+                    throw new RuntimeException("please add a name modifier for property '" + property.name +
+                            "' with values " + property.values);
+                }
+                final NamedProperty collision = propertyFields.put(
+                        propertyIdentifier, new NamedProperty(propertyValues.getIdentifier(), property));
+                if (collision != null) {
+                    throw new RuntimeException("please add a name modifier for property '" + property.name +
+                            "' with values " + property.values +
+                            " and/or property '" + collision.property.name +
+                            "' with values " + collision.property.values);
                 }
             });
             final Identifier enumName = propertyValues.getIdentifier();
-            propertyEnums.allocateName(enumName, propertyValues);
+            final PropertyValues collision = propertyEnums.put(enumName, propertyValues);
+            if (collision != null) {
+                final Set<String> propertiesA = new HashSet<>(propertyValues.properties.keySet());
+                propertyValues.subsets.forEach((_, subset) ->
+                        propertiesA.addAll(subset.properties.keySet()));
+                final Set<String> propertiesB = new HashSet<>(collision.properties.keySet());
+                collision.subsets.forEach((_, subset) ->
+                        propertiesA.addAll(subset.properties.keySet()));
+
+                throw new RuntimeException("please add a name modifier for property enum '" + enumName.enumName() +
+                        "' with properties " + propertiesA + " and values " + propertyValues.values +
+                        " and/or properties" + propertiesB + " and values " + collision.values);
+            }
         });
 
         // write enum properties and property enums
-        propertyEnums.names.forEach((identifier, propertyEnum) ->
+        propertyEnums.forEach((identifier, propertyEnum) ->
                 writeFiles(JavaFile.builder(enumsPackageName, generateEnum(propertyEnum, identifier)).indent("    ").build()));
         final ClassName enumPropertyImpl = ClassName.get(packageName, "EnumProperty");
-        propertyFields.names.forEach((identifier, namedProperty) -> {
+        propertyFields.forEach((identifier, namedProperty) -> {
             final ClassName currentEnum = ClassName.get(enumsPackageName,
-                    namedProperty.values.getIdentifier().enumName());
+                    namedProperty.enumName.enumName());
             builder.addField(FieldSpec
                 .builder(ParameterizedTypeName.get(implCN, currentEnum), identifier.constantName())
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
@@ -133,6 +165,8 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
                 .build()).build();
         });
     }
+
+    private record NamedProperty(Identifier enumName, Property property) {}
 
     private TypeSpec generateEnum(PropertyValues propertyValues, Identifier identifier) {
         final ClassName enumCN = ClassName.get(enumsPackageName, identifier.enumName());
@@ -180,52 +214,6 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
                 .addMethod(typedValueOf.build());
 
         return enumBuilder.build();
-    }
-
-    private static class NameAllocator<T extends NameAllocator.Prefixable<T>> {
-        private final Map<Identifier, T> names = new LinkedHashMap<>();
-
-        void allocateName(Identifier name, T value) {
-            final T previousValue = names.put(name, value);
-            if (previousValue == null) return;
-            names.remove(name);
-            final boolean aPrefix = value.canPrefix();
-            final boolean bPrefix = previousValue.canPrefix();
-            if (!(aPrefix || bPrefix)) {
-                throw new RuntimeException("name collision for '" + String.join("_", name.words) + "'");
-            }
-            allocateName(aPrefix ? name.withPrefix(value.prefix()) : name, value.prefixedValue());
-            allocateName(bPrefix ? name.withPrefix(previousValue.prefix()) : name, previousValue.prefixedValue());
-        }
-
-        private interface Prefixable<T extends Prefixable<T>> {
-            boolean canPrefix();
-
-            String[] prefix();
-
-            T prefixedValue();
-        }
-    }
-
-    private record NamedProperty(
-            PropertyValues values,
-            Property property,
-            boolean prefixed
-    ) implements NameAllocator.Prefixable<NamedProperty> {
-        @Override
-        public boolean canPrefix() {
-            return !prefixed;
-        }
-
-        @Override
-        public String[] prefix() {
-            return values.prefix();
-        }
-
-        @Override
-        public NamedProperty prefixedValue() {
-            return new NamedProperty(values, property, true);
-        }
     }
 
     private record Identifier(String[] words) {
@@ -307,22 +295,22 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
         }
     }
 
-    private static class PropertyValues implements NameAllocator.Prefixable<PropertyValues> {
+    private static class PropertyValues {
         final List<String> values;
         final Map<String, Property> properties = new LinkedHashMap<>();
-        boolean prefixIdentifier = false;
+        final Map<List<String>, PropertyValues> subsets = new LinkedHashMap<>();
         @Nullable List<PropertyValues> split = null;
 
         // -1: unknown, 0: boolean, 1: integer, 2: enum
         private int type = -1;
-        private String @Nullable [] prefix = null;
+        private @Nullable Identifier commonPart = null;
 
         private PropertyValues(List<String> values) {
             this.values = values;
         }
 
         private void registerBlock(String property, Identifier block) {
-            properties.computeIfAbsent(property, Property::new).registerBlock(block);
+            properties.computeIfAbsent(property, _ -> new Property(property, values)).registerBlock(block);
         }
 
         int type() {
@@ -357,26 +345,52 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
         }
 
         void trySplit() {
-            final Map<String, PropertyValues> suffixWordSorted = new LinkedHashMap<>();
-            for (final Property property : properties.values()) {
-                final Map<String, List<Identifier>> split = property.trySplit();
-                if (split == null) continue;
-                split.forEach((suffix, blocks) -> {
-                    final PropertyValues splitValues = suffixWordSorted.computeIfAbsent(suffix,
-                            _ -> new PropertyValues(values));
-                    blocks.forEach(block -> splitValues.registerBlock(property.name, block));
-                });
-            }
+            if (commonPart().words.length != 0) return;
+            final Map<String, Map<List<String>, PropertyValues>> suffixWordSorted = new LinkedHashMap<>();
+            Stream.concat(Stream.of(this), subsets.values().stream()).forEach(propertyValues -> {
+                for (final Property property : properties.values()) {
+                    final Map<String, List<Identifier>> split = property.trySplit();
+                    if (split == null) continue;
+                    split.forEach((suffix, blocks) -> {
+                        final Map<List<String>, PropertyValues> byValues = suffixWordSorted.computeIfAbsent(suffix,
+                                _ -> new LinkedHashMap<>());
+                        final PropertyValues splitValues = byValues.computeIfAbsent(propertyValues.values, PropertyValues::new);
+                        blocks.forEach(block -> splitValues.registerBlock(property.name, block));
+                    });
+                }
+            });
             if (suffixWordSorted.isEmpty()) return;
+
+
             // Don't make a bazillion enums/property constants.
             if (suffixWordSorted.size() > 2) {
                 suffixWordSorted.values().stream()
-                        .flatMap(propertyValues -> propertyValues.properties.values().stream())
-                        .forEach(property -> property.blocks.forEach(
-                                block -> registerBlock(property.name, block)));
+                        .flatMap(byValues -> byValues.values().stream())
+                        .forEach(propertyValues -> {
+                            final PropertyValues target = propertyValues.values.equals(this.values) ?
+                                    this : this.subsets.get(propertyValues.values);
+                            propertyValues.properties.values().forEach(
+                                    property -> property.blocks.forEach(
+                                            block -> target.registerBlock(property.name, block)));
+                });
                 return;
             }
-            split = suffixWordSorted.values().stream().toList();
+
+            // re-merge subsets
+            split = suffixWordSorted.values().stream().map(byValues -> {
+                final Iterator<PropertyValues> iterator = byValues.values().iterator();
+                PropertyValues result = iterator.next();
+                while (iterator.hasNext()) {
+                    final PropertyValues current = iterator.next();
+                    if (current.tryMerge(result)) {
+                        result = current;
+                    } else {
+                        result.tryMerge(current);
+                    }
+                }
+                return result;
+            }).toList();
+            commonPart = null;
         }
 
         boolean tryMerge(PropertyValues other) {
@@ -385,10 +399,9 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
             // the lists are fairly small
             //noinspection SlowListContainsAll
             if (!this.values.containsAll(other.values)) return false;
-            other.properties.forEach((propertyName, otherProperty) -> {
-                final Property property = properties.computeIfAbsent(propertyName, Property::new);
-                property.registerBlocks(otherProperty.blocks);
-            });
+            this.subsets.putAll(other.subsets);
+            other.subsets.clear();
+            this.subsets.put(other.values, other);
             return true;
         }
 
@@ -402,43 +415,23 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
                     throw new RuntimeException("please add a combined name for the properties " + properties.keySet());
                 }
             }
-            final Identifier result = removeMatchingPart(getCommonPart(
-                    properties.values().stream().map(Property::commonPart).toList()),
-                    enumPropertiesCombinedName);
-            if (prefixIdentifier) return result.withPrefix(prefix());
-            return result;
+            return removeMatchingPart(commonPart(), enumPropertiesCombinedName);
         }
 
-        @Override
-        public boolean canPrefix() {
-            return !prefixIdentifier;
-        }
-
-        public String[] prefix() {
-            if (prefix != null) return prefix;
-            return prefix = switch (type()) {
-                case 0 -> new String[]{"boolean"};
-                case 1 -> new String[]{"int"};
-                default -> {
-                    if (values.size() > 2 || values.stream().anyMatch(value -> value.contains("_"))) {
-                        yield values.stream()
-                                .map((word) -> String.valueOf(word.charAt(0)))
-                                .toList().toArray(new String[0]);
-                    } else {
-                        yield values.toArray(new String[0]);
-                    }
-                }
-            };
-        }
-
-        @Override
-        public PropertyValues prefixedValue() {
-            prefixIdentifier = true;
-            return this;
+        Identifier commonPart() {
+            if (commonPart != null) return commonPart;
+            return commonPart = getCommonPart(
+                    Stream.concat(
+                            properties.values().stream(),
+                            subsets.values().stream()
+                                    .flatMap(subset -> subset.properties.values().stream())
+                    ).map(Property::commonPart).toList()
+            );
         }
     }
 
     private static class Property {
+        final List<String> values;
         final String name;
         List<Identifier> blocks = new ArrayList<>();
 
@@ -447,8 +440,9 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
         private Map<String, List<Identifier>> suffixWordSorted = new LinkedHashMap<>(2);
 
 
-        Property(String name) {
+        Property(String name, List<String> values) {
             this.name = name;
+            this.values = values;
         }
 
         void registerBlock(Identifier block) {
@@ -492,7 +486,12 @@ public record PropertyGenerator(InputStream blocksFile, Path outputFolder) imple
 
         private Identifier commonPart() {
             if (commonPart != null) return commonPart;
-            return commonPart = getCommonPart(blocks);
+            commonPart = getCommonPart(blocks);
+            final Map<String, String> modifier = NAME_MODIFIERS.get(values);
+            if (modifier == null) return commonPart;
+            final String prefix = modifier.get(name);
+            if (prefix == null) return commonPart;
+            return commonPart = commonPart.withPrefix(prefix.split("_"));
         }
     }
 
